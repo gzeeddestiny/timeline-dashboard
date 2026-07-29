@@ -1,0 +1,61 @@
+import { useEffect, useState } from "react"
+import { listNotifications, markNotificationRead } from "../lib/fullSystem"
+import { supabase } from "../lib/supabase"
+
+export default function NotificationCenter({ configured, email, onOpenTask }) {
+  const [open, setOpen] = useState(false)
+  const [items, setItems] = useState([])
+  const [error, setError] = useState("")
+  const [failedRead, setFailedRead] = useState(null)
+
+  useEffect(() => {
+    if (!configured || !email) return
+    let active = true
+    const refresh = () => listNotifications().then((next) => { if (active) { setItems(next); setError("") } }).catch((loadError) => { if (active) setError(loadError.message) })
+    refresh()
+    const channel = supabase.channel(`notifications:${email}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `recipient_email=eq.${email}` }, refresh)
+      .subscribe()
+    return () => { active = false; supabase.removeChannel(channel) }
+  }, [configured, email])
+
+  if (!configured) return null
+  const unread = items.filter((item) => !item.read_at).length
+  const markRead = async (item) => {
+    try {
+      await markNotificationRead(item.id)
+      setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, read_at: new Date().toISOString() } : entry))
+      setFailedRead(null)
+      setError("")
+    } catch (readError) {
+      setFailedRead(item)
+      setError(`เปิดงานแล้ว แต่ mark notification ไม่สำเร็จ: ${readError.message}`)
+    }
+  }
+  const openNotification = (item) => {
+    if (item.task_key) { onOpenTask?.(item.task_key); setOpen(false) }
+    if (!item.read_at) markRead(item)
+  }
+  return (
+    <div className="relative">
+      {error && <div className="fixed right-3 top-16 z-[12000] flex max-w-sm items-center gap-2 rounded-xl border border-red-200 bg-white p-3 text-xs text-red-600 shadow-xl"><span>{error}</span>{failedRead && <button type="button" onClick={() => markRead(failedRead)} className="font-bold underline">Retry</button>}<button type="button" onClick={() => setError("")} aria-label="Dismiss notification error">✕</button></div>}
+      <button onClick={() => setOpen((value) => !value)} title="Notifications" className="relative rounded-lg border border-purple-100 bg-white p-2 text-purple-500 hover:bg-purple-50">
+        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m2 0v1a2 2 0 004 0v-1" /></svg>
+        {unread > 0 && <span className="absolute -right-1.5 -top-1.5 rounded-full bg-red-500 px-1.5 text-[9px] font-bold text-white">{unread}</span>}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-11 z-[9999] w-80 overflow-hidden rounded-xl border border-purple-100 bg-white shadow-xl">
+          <div className="border-b border-purple-50 px-4 py-3 text-xs font-bold uppercase tracking-wider text-purple-500">Notifications</div>
+          <div className="max-h-80 overflow-y-auto">
+            {items.length === 0 ? <p className="p-6 text-center text-xs text-gray-300">ไม่มี notification</p> : items.map((item) => (
+              <button key={item.id} onClick={() => openNotification(item)} className={`block w-full border-b border-gray-50 px-4 py-3 text-left ${item.read_at ? "bg-white" : "bg-purple-50/60"}`}>
+                <div className="text-xs font-medium text-gray-700">{item.message}</div>
+                <div className="mt-1 text-[10px] text-gray-400">{new Date(item.created_at).toLocaleString("th-TH")}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

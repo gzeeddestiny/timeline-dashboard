@@ -1,36 +1,15 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react"
-import { ROLE_CONFIG, ROLES, matchMembers, loadTeamMembers } from "../lib/teamConfig"
-import { computeBrandStatus, confirmBrand, renameBrand, removeBrand, extractBrandName } from "../lib/sheetsApi"
-import { getClientColor } from "./TimelineBar"
+import { ROLE_CONFIG, ROLES, matchMembers } from "../lib/teamConfig"
+import { extractBrandName } from "../lib/sheetsApi"
+import { filterDashboardTasks } from "../lib/dashboardFilters"
+import { normalizeBrandKey, tabKey, taskKey } from "../lib/sharedState"
+import { daysFrom } from "../lib/dates"
 import AssignTeam from "./AssignTeam"
-
-// ─── Count-up Hook ──────────────────────────────────────────────────────────────
-
-function useCountUp(target, duration = 800) {
-  const [val, setVal] = useState(0)
-  useEffect(() => {
-    if (target === 0) { setVal(0); return }
-    const start = performance.now()
-    let raf
-    const step = (now) => {
-      const progress = Math.min((now - start) / duration, 1)
-      const eased = 1 - Math.pow(1 - progress, 3) // ease-out cubic
-      setVal(Math.round(eased * target))
-      if (progress < 1) raf = requestAnimationFrame(step)
-    }
-    raf = requestAnimationFrame(step)
-    return () => cancelAnimationFrame(raf)
-  }, [target, duration])
-  return val
-}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
 function daysFromToday(dueDate) {
-  if (!dueDate) return null
-  const today = new Date(); today.setHours(0, 0, 0, 0)
-  const due = new Date(dueDate); due.setHours(0, 0, 0, 0)
-  return Math.floor((due - today) / (1000 * 60 * 60 * 24))
+  return daysFrom(dueDate)
 }
 
 function fmtDate(iso) {
@@ -51,20 +30,28 @@ function progressColor(pct) {
 }
 
 function overdueConfig(absDays) {
-  if (absDays >= 15) return { cls: "bg-red-500 text-white", emoji: "💀" }
-  if (absDays >= 10) return { cls: "bg-red-300 text-red-900", emoji: "🔥" }
-  if (absDays >= 6) return { cls: "bg-red-200 text-red-800", emoji: "😰" }
-  if (absDays >= 3) return { cls: "bg-red-100 text-red-700", emoji: "😬" }
-  return { cls: "bg-red-50 text-red-500", emoji: "" }
+  if (absDays >= 15) return { cls: "bg-red-600 text-white", label: "Critical" }
+  if (absDays >= 8) return { cls: "bg-red-200 text-red-800", label: "High" }
+  if (absDays >= 4) return { cls: "bg-orange-100 text-orange-700", label: "Medium" }
+  return { cls: "bg-amber-50 text-amber-700", label: "Low" }
+}
+
+function trendCount(metrics, status) {
+  const fields = {
+    overdue: "overdue", upcoming: "upcoming", done: "done", not_started: "notStarted",
+    in_progress: "inProgress", waiting_client: "waitingClient", blocked: "blocked", unscheduled: "unscheduled",
+  }
+  return status === "all" ? metrics.total || 0 : metrics[fields[status]] || 0
 }
 
 // ─── Sub-components ─────────────────────────────────────────────────────────────
 
-function StatCard({ icon, label, value, sub, color, animDelay = 0, glowClass = "" }) {
-  const displayVal = useCountUp(typeof value === "number" ? value : 0)
+function StatCard({ icon, label, value, sub, color, animDelay = 0, glowClass = "", onClick }) {
   return (
-    <div
-      className={`rounded-2xl border ${color.border} ${color.bg} p-5 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter ${glowClass}`}
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-2xl border text-left ${color.border} ${color.bg} p-5 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter ${glowClass}`}
       style={{ animationDelay: `${animDelay}ms` }}
     >
       <div className="flex items-center gap-3">
@@ -72,26 +59,26 @@ function StatCard({ icon, label, value, sub, color, animDelay = 0, glowClass = "
           {icon}
         </div>
         <div>
-          <div className={`text-2xl font-black tabular-nums ${color.text}`}>{typeof value === "number" ? displayVal : value}</div>
+          <div className={`text-2xl font-black tabular-nums ${color.text}`}>{value}</div>
           <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">{label}</div>
         </div>
       </div>
       {sub && <div className="mt-2 text-[11px] text-gray-500">{sub}</div>}
-    </div>
+    </button>
   )
 }
 
 function CompletionRing({ pct }) {
-  const animatedPct = useCountUp(Math.round(pct), 1000)
+  const roundedPct = Math.round(pct)
   return (
     <div
       className="flex h-11 w-11 items-center justify-center rounded-full animate-magic-scale"
       style={{
-        background: `conic-gradient(${progressColor(animatedPct)} ${animatedPct * 3.6}deg, #f3e8ff ${animatedPct * 3.6}deg)`,
+        background: `conic-gradient(${progressColor(roundedPct)} ${roundedPct * 3.6}deg, #f3e8ff ${roundedPct * 3.6}deg)`,
       }}
     >
       <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[11px] font-black text-purple-700">
-        {animatedPct}%
+        {roundedPct}%
       </div>
     </div>
   )
@@ -105,9 +92,11 @@ function EditableClientName({ name, rawTabNames, onRename }) {
 
   const commit = () => {
     const trimmed = value.trim()
-    if (trimmed && trimmed !== name) onRename(rawTabNames, trimmed)
+    if (trimmed && trimmed !== name) onRename(name, rawTabNames, trimmed)
     setEditing(false)
   }
+
+  if (!onRename) return <span className="block truncate text-sm font-semibold text-gray-800">{name}</span>
 
   if (editing) {
     return (
@@ -156,7 +145,7 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
   }
 
   const handleConfirmNew = (tab) => {
-    const name = (newConfirmName[tab] || extractBrandName(tab)).trim()
+    const name = (newConfirmName[tab.key] || extractBrandName(tab.title)).trim()
     if (name) onConfirm(name, [tab])
   }
 
@@ -191,14 +180,14 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
               </div>
               <div className="space-y-2">
                 {newTabs.map((tab) => {
-                  const suggested = newConfirmName[tab] ?? extractBrandName(tab)
+                  const suggested = newConfirmName[tab.key] ?? extractBrandName(tab.title)
                   return (
-                    <div key={tab} className="rounded-xl border border-amber-200 bg-amber-50/50 px-3 py-2.5 space-y-2">
-                      <div className="text-[10px] text-gray-400 truncate" title={tab}>Tab: {tab}</div>
+                    <div key={tab.key} className="rounded-xl border border-amber-200 bg-amber-50/50 px-3 py-2.5 space-y-2">
+                      <div className="text-[10px] text-gray-400 truncate" title={tab.title}>Tab: {tab.title}</div>
                       <div className="flex items-center gap-2">
                         <input
                           value={suggested}
-                          onChange={(e) => setNewConfirmName((p) => ({ ...p, [tab]: e.target.value }))}
+                          onChange={(e) => setNewConfirmName((p) => ({ ...p, [tab.key]: e.target.value }))}
                           onKeyDown={(e) => e.key === "Enter" && handleConfirmNew(tab)}
                           className="flex-1 rounded-lg border border-amber-200 px-2.5 py-1.5 text-sm font-medium text-gray-700 outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-200"
                           placeholder="ชื่อแบรนด์..."
@@ -290,8 +279,8 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
                       <div className="border-t border-gray-100 bg-white px-3 py-2 space-y-1">
                         <div className="text-[9px] font-bold uppercase tracking-wider text-gray-300 mb-1">Google Sheet Tabs</div>
                         {data.tabs.map((tab) => (
-                          <div key={tab} className="flex items-center gap-2 text-[10px] text-gray-500 py-0.5">
-                            <span className="flex-1 truncate" title={tab}>{tab}</span>
+                          <div key={tab.key} className="flex items-center gap-2 text-[10px] text-gray-500 py-0.5">
+                            <span className="flex-1 truncate" title={tab.title}>{tab.title}</span>
                           </div>
                         ))}
                       </div>
@@ -307,7 +296,7 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
   )
 }
 
-function ClientHealthRow({ name, rawTabNames, stats, overdueCount, nextTask, assignments, onUpdateAssignment, onRename, animDelay = 0 }) {
+function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, overdueCount, nextTask, assignments, teamMembers, onUpdateAssignment, onRename, onOpen, animDelay = 0 }) {
   const pct = stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0
   const barWidth = stats.total > 0 ? (stats.done / stats.total) * 100 : 0
 
@@ -316,6 +305,7 @@ function ClientHealthRow({ name, rawTabNames, stats, overdueCount, nextTask, ass
       {/* Client name — editable */}
       <div className="w-56 shrink-0">
         <EditableClientName name={name} rawTabNames={rawTabNames} onRename={onRename} />
+        <button type="button" onClick={onOpen} className="mt-1 text-[9px] font-semibold text-purple-400 hover:text-purple-600">ดูงานทั้งหมด</button>
       </div>
 
       {/* Progress bar */}
@@ -367,8 +357,11 @@ function ClientHealthRow({ name, rawTabNames, stats, overdueCount, nextTask, ass
       {/* Team */}
       <div className="w-28 flex justify-end">
         <AssignTeam
-          clientName={name}
+          displayName={name}
+          assignmentKey={assignmentKey}
+          legacyKey={legacyKey}
           assignments={assignments}
+          members={teamMembers}
           onUpdate={onUpdateAssignment}
           compact
         />
@@ -377,16 +370,17 @@ function ClientHealthRow({ name, rawTabNames, stats, overdueCount, nextTask, ass
   )
 }
 
-function MemberCard({ member, stats, maxOverdue, animDelay = 0 }) {
+function MemberCard({ member, stats, maxOverdue, onOpen, animDelay = 0 }) {
   const rc = ROLE_CONFIG[member.role]
   const total = stats.done + stats.pending + stats.overdue
   const isHighOverdue = stats.overdue > 0 && stats.overdue >= maxOverdue
 
   return (
-    <div
+    <button type="button"
+      onClick={onOpen}
       className={`rounded-2xl border bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter ${
         isHighOverdue ? "border-red-200 animate-overdue-glow" : "border-gray-100"
-      }`}
+      } text-left`}
       style={{ animationDelay: `${animDelay}ms` }}
     >
       <div className="flex items-center gap-3 mb-3">
@@ -455,20 +449,20 @@ function MemberCard({ member, stats, maxOverdue, animDelay = 0 }) {
       ) : (
         <div className="text-[11px] text-gray-300 mt-1">ไม่มีงาน</div>
       )}
-    </div>
+    </button>
   )
 }
 
 function OverdueItem({ task, brandName, animDelay = 0 }) {
   const days = daysFromToday(task.dueDate)
   const absDays = Math.abs(days ?? 0)
-  const { cls, emoji } = overdueConfig(absDays)
+  const { cls, label } = overdueConfig(absDays)
 
   return (
-    <div className="flex items-center gap-2.5 rounded-lg px-3 py-2 transition hover:bg-red-50/50 animate-magic-enter" style={{ animationDelay: `${animDelay}ms` }}>
+    <a href={`https://docs.google.com/spreadsheets/d/${task.spreadsheetId}/edit#gid=${task.sheetGid}`} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 rounded-lg px-3 py-2 transition hover:bg-red-50/50 animate-magic-enter" style={{ animationDelay: `${animDelay}ms` }}>
       {/* Severity */}
-      <span className={`shrink-0 inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${cls} ${absDays >= 6 ? "animate-overdue-glow" : "animate-overdue-pulse"}`}>
-        {emoji && <span>{emoji}</span>}{days}d
+      <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${cls}`}>
+        {absDays}d late <span className="text-[8px] uppercase opacity-70">{label}</span>
       </span>
       {/* Client */}
       <span className="shrink-0 rounded-full bg-purple-50 px-2 py-0.5 text-[9px] font-medium text-purple-500 max-w-20 truncate">
@@ -478,11 +472,11 @@ function OverdueItem({ task, brandName, animDelay = 0 }) {
       <span className="text-[11px] text-gray-600 truncate flex-1 min-w-0">{task.topic}</span>
       {/* Person */}
       <span className="text-[10px] text-gray-400 shrink-0 max-w-16 truncate">{task.responsibility}</span>
-    </div>
+    </a>
   )
 }
 
-function UpcomingDayGroup({ dateKey, tasks, tabToBrand }) {
+function UpcomingDayGroup({ dateKey, tasks, brandNameForTask }) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-1.5">
@@ -499,14 +493,14 @@ function UpcomingDayGroup({ dateKey, tasks, tabToBrand }) {
           const d = daysFromToday(t.dueDate)
           const dotColor = d === 0 ? "bg-orange-400" : d <= 2 ? "bg-amber-400" : "bg-green-400"
           return (
-            <div key={t.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition hover:bg-purple-50/50">
+            <a key={taskKey(t)} href={`https://docs.google.com/spreadsheets/d/${t.spreadsheetId}/edit#gid=${t.sheetGid}`} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition hover:bg-purple-50/50">
               <span className={`h-2 w-2 rounded-full shrink-0 ${dotColor}`} />
               <span className="shrink-0 rounded-full bg-purple-50 px-2 py-0.5 text-[9px] font-medium text-purple-500 max-w-20 truncate">
-                {tabToBrand[t.clientName] || t.clientName}
+                {brandNameForTask(t)}
               </span>
               <span className="text-[11px] text-gray-600 truncate flex-1 min-w-0">{t.topic}</span>
               <span className="text-[10px] text-gray-400 shrink-0">{t.responsibility}</span>
-            </div>
+            </a>
           )
         })}
       </div>
@@ -536,7 +530,7 @@ const ZOOM_LEVELS = [
   { label: "All", days: 0 },
 ]
 
-function GanttTimeline({ allTasks, filterMember, teamMembers, assignments }) {
+function GanttTimeline({ allTasks, brandNameForTask }) {
   const scrollRef = useRef(null)
   const containerRef = useRef(null)
   const [tooltip, setTooltip] = useState(null)
@@ -555,28 +549,19 @@ function GanttTimeline({ allTasks, filterMember, teamMembers, assignments }) {
     return () => ro.disconnect()
   }, [])
 
-  // Filter tasks by member if selected
   const tasks = useMemo(() => {
-    let filtered = allTasks.filter((t) => t.dueDate && !isNaN(new Date(t.dueDate).getTime()))
-    if (filterMember) {
-      filtered = filtered.filter((t) => {
-        const assign = assignments[t.clientName]
-        if (assign && Object.values(assign).includes(filterMember)) return true
-        const matched = matchMembers(t.responsibility)
-        return matched.some((m) => m.name === filterMember)
-      })
-    }
-    return filtered
-  }, [allTasks, filterMember, assignments])
+    return allTasks.filter((t) => t.dueDate && !isNaN(new Date(t.dueDate).getTime()))
+  }, [allTasks])
 
   // Group by client + compute layout
-  const { clients, markers, dateRange, dayWidth, totalWidth, viewDays } = useMemo(() => {
-    if (tasks.length === 0) return { clients: [], markers: [], dateRange: null, dayWidth: 0, totalWidth: 0, viewDays: 0 }
+  const { clients, markers, dateRange, dayWidth, totalWidth } = useMemo(() => {
+    if (tasks.length === 0) return { clients: [], markers: [], dateRange: null, dayWidth: 0, totalWidth: 0 }
 
     const groups = {}
     tasks.forEach((t) => {
-      if (!groups[t.clientName]) groups[t.clientName] = []
-      groups[t.clientName].push(t)
+      const brandName = brandNameForTask(t)
+      if (!groups[brandName]) groups[brandName] = []
+      groups[brandName].push(t)
     })
 
     // Find global date range from data
@@ -667,15 +652,16 @@ function GanttTimeline({ allTasks, filterMember, teamMembers, assignments }) {
         const endOffset = (latest - minDate) / 86_400_000
         const done = clientTasks.filter((t) => t.done).length
         const total = clientTasks.length
+        const maxDaysLate = Math.max(...clientTasks.filter((task) => !task.done).map((task) => Math.max(0, -daysFromToday(task.dueDate))), 0)
 
         return {
           name, tasks: clientTasks,
           startOffset, endOffset, colorIdx: idx,
-          done, total,
+          done, total, maxDaysLate,
           pct: total > 0 ? Math.round((done / total) * 100) : 0,
         }
       })
-      .sort((a, b) => a.startOffset - b.startOffset)
+      .sort((a, b) => b.maxDaysLate - a.maxDaysLate || a.startOffset - b.startOffset || a.name.localeCompare(b.name, "th"))
 
     return {
       clients: clientList,
@@ -683,9 +669,8 @@ function GanttTimeline({ allTasks, filterMember, teamMembers, assignments }) {
       dateRange: { min: minDate, max: maxDate },
       dayWidth: dw,
       totalWidth: tw,
-      viewDays: zoom.days || totalDays,
     }
-  }, [tasks, zoomIdx, containerWidth])
+  }, [tasks, zoomIdx, containerWidth, brandNameForTask])
 
   // Today marker position
   const todayOffset = useMemo(() => {
@@ -868,12 +853,12 @@ function GanttTimeline({ allTasks, filterMember, teamMembers, assignments }) {
                     const dotSize = dayWidth >= 4 ? 10 : 8
                     return (
                       <div
-                        key={t.id || ti}
+                        key={taskKey(t) || ti}
                         className="absolute top-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-sm"
                         style={{
                           left: taskOffset - dotSize / 2,
                           width: dotSize, height: dotSize,
-                          backgroundColor: t.done ? color.bg : (new Date(t.dueDate) < new Date() ? "#ef4444" : color.light),
+                          backgroundColor: t.done ? color.bg : (daysFromToday(t.dueDate) < 0 ? "#ef4444" : color.light),
                         }}
                         title={`${t.topic} — ${t.done ? "Done" : "Pending"} (${new Date(t.dueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })})`}
                       />
@@ -912,69 +897,189 @@ function GanttTimeline({ allTasks, filterMember, teamMembers, assignments }) {
   )
 }
 
+function activityDescription(event, task) {
+  const before = event.before_value || {}
+  const after = event.after_value || {}
+  if (event.resource === "task_workflow") {
+    const changes = []
+    if (before.status !== after.status) changes.push(`workflow → ${(after.status || "not_started").replaceAll("_", " ")}`)
+    if (before.note !== after.note) changes.push("note")
+    if (before.priority !== after.priority) changes.push("priority")
+    return `updated ${changes.join(", ") || "task"}${task ? ` · ${task.topic}` : ""}`
+  }
+  if (event.resource === "assignments") return `updated assignment · ${after.brand_key || before.brand_key || event.record_key}`
+  if (event.resource === "brands") return `updated brand mapping · ${after.brand_name || before.brand_name || event.record_key}`
+  if (event.resource === "tasks_current") return `${after.done ? "marked Done" : "reopened task"}${task ? ` · ${task.topic}` : ""}`
+  return `${event.event_type} ${event.resource}`
+}
+
+function RecentActivity({ events, tasks }) {
+  const taskMap = new Map(tasks.map((task) => [taskKey(task), task]))
+  return (
+    <div className="rounded-2xl border border-purple-100 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Recent Activity</h3>
+        <span className="text-[10px] text-gray-400">who changed what and when</span>
+      </div>
+      {events.length ? <div className="mt-3 divide-y divide-gray-50">
+        {events.slice(0, 10).map((event) => (
+          <div key={event.id} className="flex items-start gap-3 py-2.5 text-xs">
+            <div className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-purple-300" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-gray-700">{activityDescription(event, taskMap.get(event.record_key))}</div>
+              <div className="mt-0.5 text-[10px] text-gray-400">{event.actor_email || "System"}</div>
+            </div>
+            <time className="shrink-0 text-[10px] text-gray-400">{new Date(event.created_at).toLocaleString("th-TH")}</time>
+          </div>
+        ))}
+      </div> : <p className="mt-4 text-xs text-gray-400">Activity appears after the first saved change.</p>}
+    </div>
+  )
+}
+
 // ─── Main Dashboard ─────────────────────────────────────────────────────────────
 
 export default function DashboardView({
   allTasks = [],
-  allTasksUnfiltered = [],
-  overdue = [],
-  upcoming = [],
-  clientStats = {},
   assignments = {},
   onUpdateAssignment,
   teamMembers = [],
+  brands = {},
+  onUpdateBrand,
+  onRenameBrand,
+  brandNameForTask = (task) => task.clientName,
+  assignmentKeyForTask = (task) => normalizeBrandKey(task.clientName),
+  workflow = {},
+  dailyMetrics = [],
+  taskEvents = [],
+  syncStatus = null,
+  lastSynced = null,
+  canAdmin = false,
+  preferenceOwner = "local",
 }) {
-  const [brandVer, setBrandVer] = useState(0)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
   const [showBrandManager, setShowBrandManager] = useState(false)
   const [healthShowAll, setHealthShowAll] = useState(false)
+  const [drilldown, setDrilldown] = useState(null)
+  const filterStorageKey = `magic-dashboard-filters:${preferenceOwner}`
+  const [filters, setFilters] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(filterStorageKey)) || { status: "all", month: "all", member: "all" } }
+    catch { return { status: "all", month: "all", member: "all" } }
+  })
   const HEALTH_PREVIEW_COUNT = 5
+  useEffect(() => { localStorage.setItem(filterStorageKey, JSON.stringify(filters)) }, [filterStorageKey, filters])
 
-  // ── Brand status (confirmed vs new) ──
-  const allTabNames = useMemo(() => [...new Set(Object.keys(clientStats).map((k) => k.split("::")[0]))], [clientStats])
-  const brandStatus = useMemo(() => computeBrandStatus(allTabNames), [allTabNames, brandVer])
+  const tabRecords = useMemo(() => {
+    const records = new Map()
+    allTasks.forEach((task) => records.set(tabKey(task), { key: tabKey(task), title: task.clientName }))
+    return [...records.values()]
+  }, [allTasks])
 
-  // ── Brand action handlers ──
-  const handleConfirmBrand = (name, tabs) => {
-    confirmBrand(name, tabs)
-    setBrandVer((v) => v + 1)
-  }
-  const handleRenameBrand = (oldName, newName) => {
-    renameBrand(oldName, newName)
-    setBrandVer((v) => v + 1)
-  }
-  const handleRemoveBrand = (name) => {
-    removeBrand(name)
-    setBrandVer((v) => v + 1)
-  }
-  // Inline rename from ClientHealthRow
-  const handleInlineRename = (rawTabNames, newName) => {
-    confirmBrand(newName, rawTabNames)
-    setBrandVer((v) => v + 1)
-  }
-
-  // ── Merge clientStats by resolved brand name (dashboard only) ──
-  const brandData = useMemo(() => {
-    const { confirmed, newTabs, tabToBrand } = brandStatus
-
-    // Group raw tab names → brand name, merge stats
-    const brands = {}
-    Object.entries(clientStats).forEach(([statsKey, s]) => {
-      const tabName = statsKey.split("::")[0]
-      const brand = tabToBrand[tabName] || tabName
-      if (!brands[brand]) brands[brand] = { total: 0, done: 0, rawTabNames: new Set(), isNew: false }
-      brands[brand].total += s.total
-      brands[brand].done += s.done
-      brands[brand].rawTabNames.add(tabName)
-      if (newTabs.includes(tabName)) brands[brand].isNew = true
+  const confirmed = useMemo(() => {
+    const grouped = {}
+    tabRecords.forEach((tab) => {
+      const brand = brands[tab.key]
+      if (!brand) return
+      if (!grouped[brand]) grouped[brand] = { tabs: [] }
+      grouped[brand].tabs.push(tab)
     })
+    return grouped
+  }, [brands, tabRecords])
+  const newTabs = useMemo(() => tabRecords.filter((tab) => !brands[tab.key]), [brands, tabRecords])
 
-    return { brands, tabToBrand, confirmed, newTabs }
-  }, [clientStats, brandStatus])
+  const handleConfirmBrand = (name, tabs) => Promise.all(tabs.map((tab) => onUpdateBrand(tab.key, name)))
+  const handleRenameBrand = async (oldName, newName) => {
+    const tabs = confirmed[oldName]?.tabs || []
+    if (onRenameBrand) await onRenameBrand(oldName, newName, tabs)
+  }
+  const handleRemoveBrand = (name) => (confirmed[name]?.tabs || []).forEach((tab) => onUpdateBrand(tab.key, null))
+  const handleInlineRename = async (oldName, tabs, newName) => {
+    if (onRenameBrand) await onRenameBrand(oldName, newName, tabs)
+  }
+
+  const assignedNames = useCallback((task) => {
+    const assignment = assignments[assignmentKeyForTask(task)] || assignments[task.clientName] || {}
+    const responsibility = matchMembers(task.responsibility).map((member) => member.name)
+    return [...new Set([...Object.values(assignment), ...responsibility])]
+  }, [assignments, assignmentKeyForTask])
+
+  const tasksWithWorkflow = useMemo(() => allTasks.map((task) => ({
+    ...task,
+    workflowStatus: workflow[taskKey(task)] || "not_started",
+  })), [allTasks, workflow])
+  const months = useMemo(() => [...new Set(tasksWithWorkflow.map((task) => task.month).filter(Boolean))].sort(), [tasksWithWorkflow])
+  const filteredTasks = useMemo(
+    () => filterDashboardTasks(tasksWithWorkflow, filters, assignedNames),
+    [tasksWithWorkflow, filters, assignedNames],
+  )
+  const overdue = useMemo(() => filteredTasks.filter((task) => !task.done && daysFromToday(task.dueDate) < 0), [filteredTasks])
+  const upcoming = useMemo(() => filteredTasks.filter((task) => !task.done && daysFromToday(task.dueDate) >= 0), [filteredTasks])
+  const unscheduled = useMemo(() => filteredTasks.filter((task) => !task.done && daysFromToday(task.dueDate) === null), [filteredTasks])
+  const blocked = useMemo(() => filteredTasks.filter((task) => !task.done && task.workflowStatus === "blocked"), [filteredTasks])
+  const waitingClient = useMemo(() => filteredTasks.filter((task) => !task.done && task.workflowStatus === "waiting_client"), [filteredTasks])
+  const aging = useMemo(() => {
+    const buckets = { "1–3": 0, "4–7": 0, "8–14": 0, "15+": 0 }
+    overdue.forEach((task) => {
+      const days = Math.abs(daysFromToday(task.dueDate))
+      if (days <= 3) buckets["1–3"]++
+      else if (days <= 7) buckets["4–7"]++
+      else if (days <= 14) buckets["8–14"]++
+      else buckets["15+"]++
+    })
+    return buckets
+  }, [overdue])
+  const monthlyTrend = useMemo(() => {
+    const dimension = filters.member !== "all" && filters.month !== "all"
+      ? ["month_person", `${filters.month}:${filters.member}`]
+      : filters.member !== "all"
+        ? ["person", filters.member]
+        : filters.month !== "all"
+          ? ["month", filters.month]
+          : ["overall", "all"]
+    const monthly = new Map()
+    dailyMetrics.filter((row) => row.dimension === dimension[0] && row.dimension_key === dimension[1]).forEach((row) => {
+      const month = row.snapshot_date.slice(0, 7)
+      const current = monthly.get(month) || { latest: row, created: 0, resolved: 0 }
+      if (current.latest.snapshot_date < row.snapshot_date) current.latest = row
+      current.created += row.metrics?.overdueCreated || 0
+      current.resolved += row.metrics?.overdueResolved || 0
+      monthly.set(month, current)
+    })
+    return [...monthly.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-12).map(([month, value]) => [month, {
+      ...value.latest,
+      metrics: { ...value.latest.metrics, overdueCreated: value.created, overdueResolved: value.resolved },
+    }])
+  }, [dailyMetrics, filters.member, filters.month])
+  const openDrilldown = (label, tasks) => setDrilldown({ label, tasks })
+  const agingTasks = (label) => overdue.filter((task) => {
+    const days = Math.abs(daysFromToday(task.dueDate))
+    if (label === "1–3") return days <= 3
+    if (label === "4–7") return days >= 4 && days <= 7
+    if (label === "8–14") return days >= 8 && days <= 14
+    return days >= 15
+  })
+
+  const brandData = useMemo(() => {
+    const grouped = {}
+    filteredTasks.forEach((task) => {
+      const name = brandNameForTask(task)
+      if (!grouped[name]) grouped[name] = { total: 0, done: 0, tasks: [], rawTabNames: new Map() }
+      grouped[name].total++
+      if (task.done) grouped[name].done++
+      grouped[name].tasks.push(task)
+      grouped[name].rawTabNames.set(tabKey(task), { key: tabKey(task), title: task.clientName })
+    })
+    return { brands: grouped, confirmed, newTabs }
+  }, [filteredTasks, brandNameForTask, confirmed, newTabs])
 
   // ── Computed metrics (use filtered allTasks for accurate per-person stats) ──
   const metrics = useMemo(() => {
-    const totalAll = allTasks.length
-    const totalDone = allTasks.filter((t) => t.done).length
+    const totalAll = filteredTasks.length
+    const totalDone = filteredTasks.filter((t) => t.done).length
     const completionPct = totalAll > 0 ? (totalDone / totalAll) * 100 : 0
     const activeClientNames = Object.entries(brandData.brands)
       .filter(([, c]) => c.done < c.total)
@@ -990,72 +1095,55 @@ export default function DashboardView({
     })
 
     return { totalAll, totalDone, completionPct, activeClientNames, completedClientNames, dueThisWeek }
-  }, [allTasks, brandData, upcoming])
+  }, [filteredTasks, brandData, upcoming])
 
   // ── Client health data sorted by risk (raw tab names, not brand-resolved) ──
   const clientHealth = useMemo(() => {
-    return Object.entries(clientStats)
-      .map(([statsKey, stats]) => {
-        const tabName = statsKey.split("::")[0]
+    return Object.entries(brandData.brands)
+      .map(([name, data]) => {
+        const stats = { total: data.total, done: data.done }
         const pct = stats.total > 0 ? (stats.done / stats.total) * 100 : 0
-        const spreadsheetId = statsKey.split("::")[1]
-        const clientOverdue = overdue.filter((t) => t.clientName === tabName && t.spreadsheetId === spreadsheetId)
-        const clientUpcoming = upcoming.filter((t) => t.clientName === tabName && t.spreadsheetId === spreadsheetId)
+        const clientOverdue = data.tasks.filter((task) => !task.done && daysFromToday(task.dueDate) < 0)
+        const clientUpcoming = data.tasks.filter((task) => !task.done && daysFromToday(task.dueDate) >= 0)
+        const blockedCount = data.tasks.filter((task) => !task.done && task.workflowStatus === "blocked").length
         const nextTask = clientUpcoming[0] || null
-        const risk = clientOverdue.length * 10 + (100 - pct)
+        const maxDaysLate = Math.max(...clientOverdue.map((task) => Math.abs(daysFromToday(task.dueDate))), 0)
+        const firstTask = data.tasks[0]
         return {
-          name: tabName,
-          rawTabNames: [tabName],
+          name,
+          rawTabNames: [...data.rawTabNames.values()],
+          assignmentKey: assignmentKeyForTask(firstTask),
+          legacyKey: firstTask.clientName,
           stats,
-          overdueCount: clientOverdue.length,
-          nextTask, risk, pct,
+          overdueCount: clientOverdue.length, blockedCount,
+          nextTask, maxDaysLate, pct,
         }
       })
       .filter((c) => c.pct < 100)
-      .sort((a, b) => b.risk - a.risk)
-  }, [clientStats, overdue, upcoming])
+      .sort((a, b) => b.blockedCount - a.blockedCount || b.maxDaysLate - a.maxDaysLate || b.overdueCount - a.overdueCount || a.name.localeCompare(b.name, "th"))
+  }, [brandData, assignmentKeyForTask])
 
   // ── Team workload ──
   const teamWorkload = useMemo(() => {
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-
     const memberStats = teamMembers.map((member) => {
-      // Use unfiltered tasks so Team Workload always shows full picture
-      const tasksPool = allTasksUnfiltered.length > 0 ? allTasksUnfiltered : allTasks
-      const myTasks = tasksPool.filter((t) => {
-        const assign = assignments[t.clientName]
-        if (assign) {
-          const assignedNames = Object.values(assign)
-          if (assignedNames.includes(member.name)) return true
-        }
-        const matched = matchMembers(t.responsibility)
-        return matched.some((m) => m.name === member.name)
-      })
+      const myTasks = filteredTasks.filter((task) => assignedNames(task).includes(member.name))
 
       const done = myTasks.filter((t) => t.done).length
-      const overdueCount = myTasks.filter((t) => {
-        if (t.done) return false
-        const due = new Date(t.dueDate); due.setHours(0, 0, 0, 0)
-        return due < today
-      }).length
+      const overdueCount = myTasks.filter((t) => !t.done && daysFromToday(t.dueDate) < 0).length
       const pending = myTasks.length - done - overdueCount
-      const clients = [...new Set(myTasks.map((t) => brandData.tabToBrand[t.clientName] || t.clientName))]
+      const clients = [...new Set(myTasks.map(brandNameForTask))]
 
       return { member, stats: { done, pending, overdue: overdueCount, clients } }
     })
 
     const maxOverdue = Math.max(...memberStats.map((m) => m.stats.overdue), 0)
     return { memberStats, maxOverdue }
-  }, [allTasksUnfiltered, allTasks, assignments, teamMembers])
+  }, [filteredTasks, assignedNames, teamMembers, brandNameForTask])
 
-  // ── Upcoming grouped by day (next 7 days) ──
+  // ── All future work grouped by day ──
   const upcomingByDay = useMemo(() => {
-    const thisWeek = upcoming.filter((t) => {
-      const d = daysFromToday(t.dueDate)
-      return d !== null && d >= 0 && d <= 7
-    })
     const grouped = {}
-    thisWeek.forEach((t) => {
+    upcoming.forEach((t) => {
       if (!grouped[t.dueDate]) grouped[t.dueDate] = []
       grouped[t.dueDate].push(t)
     })
@@ -1065,13 +1153,73 @@ export default function DashboardView({
   return (
     <div className="space-y-6">
 
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-purple-100 bg-white p-4 shadow-sm">
+        <div className="mr-1">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-purple-500">Dashboard Filters</div>
+          <div className="text-[10px] text-gray-400">{filteredTasks.length} of {allTasks.length} tasks</div>
+        </div>
+        <label className="text-[10px] font-semibold text-gray-500">
+          Status
+          <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} className="ml-1.5 rounded-lg border border-purple-100 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-purple-400">
+            <option value="all">All</option>
+            <option value="overdue">Overdue</option>
+            <option value="upcoming">Upcoming</option>
+            <option value="done">Done</option>
+            <option value="not_started">Not started</option>
+            <option value="in_progress">In progress</option>
+            <option value="waiting_client">Waiting client</option>
+            <option value="blocked">Blocked</option>
+            <option value="unscheduled">Unscheduled</option>
+          </select>
+        </label>
+        <label className="text-[10px] font-semibold text-gray-500">
+          Month
+          <select value={filters.month} onChange={(event) => setFilters((current) => ({ ...current, month: event.target.value }))} className="ml-1.5 rounded-lg border border-purple-100 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-purple-400">
+            <option value="all">All</option>
+            {months.map((month) => <option key={month} value={month}>{month}</option>)}
+          </select>
+        </label>
+        <label className="text-[10px] font-semibold text-gray-500">
+          Person
+          <select value={filters.member} onChange={(event) => setFilters((current) => ({ ...current, member: event.target.value }))} className="ml-1.5 rounded-lg border border-purple-100 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-purple-400">
+            <option value="all">All</option>
+            {teamMembers.map((member) => <option key={member.name} value={member.name}>{member.name}</option>)}
+          </select>
+        </label>
+        <button onClick={() => setFilters({ status: "all", month: "all", member: "all" })} disabled={Object.values(filters).every((value) => value === "all")} className="ml-auto rounded-lg border border-purple-200 px-3 py-1.5 text-[10px] font-semibold text-purple-500 transition hover:bg-purple-50 disabled:cursor-not-allowed disabled:opacity-40">
+          Reset
+        </button>
+      </div>
+
       {/* ── ① Summary Stat Cards (top of dashboard) ─────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {lastSynced && <div className={`rounded-xl border px-4 py-3 text-xs ${now - lastSynced.getTime() > 24 * 60 * 60 * 1000 ? "border-red-200 bg-red-50 text-red-700" : "border-green-100 bg-green-50 text-green-700"}`}>
+        Data freshness: {lastSynced.toLocaleString("th-TH")}
+      </div>}
+
+      <div className={`rounded-2xl border p-4 text-xs ${syncStatus?.status === "failed" ? "border-red-200 bg-red-50" : syncStatus?.status === "running" ? "border-amber-200 bg-amber-50" : "border-purple-100 bg-white"}`}>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <strong className="uppercase tracking-wider text-purple-700">Data Health</strong>
+          <span>Status: <strong>{syncStatus?.status || "not synced"}</strong></span>
+          <span>Source tasks: <strong>{syncStatus?.task_count ?? allTasks.length}</strong></span>
+          <button type="button" onClick={() => openDrilldown("Unscheduled", unscheduled)} className="underline decoration-purple-200 underline-offset-2">Unscheduled: <strong>{unscheduled.length}</strong></button>
+          <span>Invalid rows: <strong>{syncStatus?.invalid_row_count || 0}</strong></span>
+        </div>
+        {syncStatus?.error && <p className="mt-2 text-red-600">{syncStatus.error}</p>}
+        {syncStatus?.issues?.length > 0 && <div className="mt-2 max-h-24 overflow-y-auto text-[10px] text-amber-700">{syncStatus.issues.slice(0, 5).map((issue, index) => <div key={`${issue.spreadsheetId}:${issue.sheetGid}:${issue.rowIndex}:${index}`}>{issue.clientName} row {issue.rowIndex}: {issue.message}</div>)}</div>}
+      </div>
+
+      {drilldown && <div className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-purple-800">{drilldown.label} · {drilldown.tasks.length} tasks</h3><button onClick={() => setDrilldown(null)} className="text-xs text-gray-400">Close</button></div>
+        <div className="mt-3 max-h-64 divide-y divide-gray-50 overflow-y-auto">{drilldown.tasks.map((task) => <a key={taskKey(task)} href={`https://docs.google.com/spreadsheets/d/${task.spreadsheetId}/edit#gid=${task.sheetGid}`} target="_blank" rel="noreferrer" className="flex gap-3 py-2 text-xs hover:bg-purple-50"><span className="w-28 truncate font-semibold text-purple-600">{brandNameForTask(task)}</span><span className="flex-1 text-gray-600">{task.topic}</span><span className="text-gray-400">{fmtDate(task.dueDate)}</span></a>)}</div>
+      </div>}
+
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
           label="Overdue"
           value={overdue.length}
           sub={overdue.length > 0 ? `${overdue.length} tasks past deadline` : "All clear!"}
           animDelay={0}
+          onClick={() => openDrilldown("Overdue", overdue)}
           glowClass={overdue.length > 0 ? "animate-overdue-glow" : ""}
           color={{
             bg: overdue.length > 0 ? "bg-red-50" : "bg-green-50",
@@ -1087,10 +1235,31 @@ export default function DashboardView({
         />
 
         <StatCard
+          label="Blocked"
+          value={blocked.length}
+          sub="Requires intervention"
+          animDelay={120}
+          onClick={() => openDrilldown("Blocked", blocked)}
+          color={{ bg: "bg-red-50", border: "border-red-200", iconBg: "bg-red-100", text: "text-red-700" }}
+          icon={<span className="text-lg font-black text-red-500">!</span>}
+        />
+
+        <StatCard
+          label="Waiting Client"
+          value={waitingClient.length}
+          sub="Pending external response"
+          animDelay={160}
+          onClick={() => openDrilldown("Waiting Client", waitingClient)}
+          color={{ bg: "bg-blue-50", border: "border-blue-200", iconBg: "bg-blue-100", text: "text-blue-700" }}
+          icon={<span className="text-lg font-black text-blue-500">…</span>}
+        />
+
+        <StatCard
           label="Due This Week"
           value={metrics.dueThisWeek.length}
           sub="Next 7 days"
           animDelay={80}
+          onClick={() => openDrilldown("Due This Week", metrics.dueThisWeek)}
           color={{
             bg: "bg-amber-50", border: "border-amber-200",
             iconBg: "bg-amber-100", text: "text-amber-600",
@@ -1102,7 +1271,7 @@ export default function DashboardView({
           }
         />
 
-        <div className="rounded-2xl border border-purple-200 bg-purple-50 p-5 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter" style={{ animationDelay: "160ms" }}>
+        <button type="button" onClick={() => openDrilldown("Completed", filteredTasks.filter((task) => task.done))} className="rounded-2xl border border-purple-200 bg-purple-50 p-5 text-left transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter" style={{ animationDelay: "160ms" }}>
           <div className="flex items-center gap-3">
             <CompletionRing pct={metrics.completionPct} />
             <div>
@@ -1111,7 +1280,7 @@ export default function DashboardView({
             </div>
           </div>
           <div className="mt-2 text-[11px] text-gray-500">{metrics.totalDone} of {metrics.totalAll} tasks done</div>
-        </div>
+        </button>
 
         <div className="rounded-2xl border border-purple-100 bg-purple-50/50 p-5 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter" style={{ animationDelay: "240ms" }}>
           <div className="flex items-center gap-3">
@@ -1142,8 +1311,15 @@ export default function DashboardView({
               ))}
             </div>
           )}
-          {/* จัดการ button */}
           <button
+            type="button"
+            onClick={() => openDrilldown("Active Clients", filteredTasks.filter((task) => metrics.activeClientNames.includes(brandNameForTask(task))))}
+            className="mt-2 mr-1 rounded-lg border border-purple-200 bg-white px-2 py-1 text-[10px] font-semibold text-purple-500 transition hover:bg-purple-50"
+          >
+            ดูงานทั้งหมด
+          </button>
+          {/* จัดการ button */}
+          {canAdmin && <button
             onClick={() => setShowBrandManager(true)}
             className="mt-2 flex items-center gap-1 rounded-lg border border-purple-200 bg-white px-2 py-1 text-[10px] font-semibold text-purple-500 transition hover:bg-purple-50 active:scale-95"
           >
@@ -1152,9 +1328,24 @@ export default function DashboardView({
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
             จัดการรายชื่อ
-          </button>
+          </button>}
         </div>
       </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-purple-100 bg-white p-5 shadow-sm">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Overdue Aging</h3>
+          <div className="mt-4 grid grid-cols-4 gap-2">
+            {Object.entries(aging).map(([label, count]) => <button key={label} onClick={() => openDrilldown(`Overdue ${label} days`, agingTasks(label))} className="rounded-xl bg-red-50 p-3 text-center transition hover:bg-red-100"><div className="text-xl font-black text-red-600">{count}</div><div className="text-[10px] text-red-400">{label} days</div></button>)}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-purple-100 bg-white p-5 shadow-sm">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">12-Month Trend</h3>
+          {monthlyTrend.length ? <div className="mt-3 overflow-x-auto"><table className="w-full text-[10px]"><thead className="text-left text-gray-400"><tr><th>Month</th><th>Completion</th><th>Created</th><th>Resolved</th><th>Blocked</th><th>{filters.status === "all" ? "Workload" : filters.status.replaceAll("_", " ")}</th></tr></thead><tbody>{monthlyTrend.map(([month, row]) => { const metrics = row.metrics || {}; const completion = metrics.total ? Math.round((metrics.done / metrics.total) * 100) : 0; return <tr key={month} className="border-t border-gray-50"><td className="py-1.5 font-semibold text-gray-600">{month}</td><td>{completion}%</td><td>{metrics.overdueCreated || 0}</td><td>{metrics.overdueResolved || 0}</td><td>{metrics.blocked || 0}</td><td>{trendCount(metrics, filters.status)}</td></tr> })}</tbody></table><p className="mt-2 text-[9px] text-gray-300">Historical snapshot metrics; task-level history is not available.</p></div> : <p className="mt-4 text-xs text-gray-400">Trend starts after the first successful sync.</p>}
+        </div>
+      </div>
+
+      <RecentActivity events={taskEvents} tasks={allTasks} />
 
       {/* ── Gantt Timeline ──────────────────────────────────────────── */}
       <div className="rounded-2xl border border-purple-100 bg-white shadow-sm animate-magic-enter" style={{ animationDelay: "100ms" }}>
@@ -1166,10 +1357,8 @@ export default function DashboardView({
         </div>
         <div className="p-3 relative">
           <GanttTimeline
-            allTasks={allTasks}
-            filterMember={null}
-            teamMembers={teamMembers}
-            assignments={assignments}
+            allTasks={filteredTasks}
+            brandNameForTask={brandNameForTask}
           />
         </div>
       </div>
@@ -1203,12 +1392,16 @@ export default function DashboardView({
                     animDelay={Math.min(hi, 10) * 60}
                     name={c.name}
                     rawTabNames={c.rawTabNames}
+                    assignmentKey={c.assignmentKey}
+                    legacyKey={c.legacyKey}
                     stats={c.stats}
                     overdueCount={c.overdueCount}
                     nextTask={c.nextTask}
                     assignments={assignments}
+                    teamMembers={teamMembers}
                     onUpdateAssignment={onUpdateAssignment}
-                    onRename={handleInlineRename}
+                    onRename={canAdmin ? handleInlineRename : null}
+                    onOpen={() => openDrilldown(c.name, filteredTasks.filter((task) => brandNameForTask(task) === c.name))}
                   />
                 ))}
                 {clientHealth.length > HEALTH_PREVIEW_COUNT && (
@@ -1244,7 +1437,7 @@ export default function DashboardView({
             {overdue.length > 0 ? (
               <div className="space-y-0.5">
                 {overdue.slice(0, 10).map((t, oi) => (
-                  <OverdueItem key={t.id} task={t} brandName={brandData.tabToBrand[t.clientName] || t.clientName} animDelay={oi * 50} />
+                  <OverdueItem key={taskKey(t)} task={t} brandName={brandNameForTask(t)} animDelay={oi * 50} />
                 ))}
                 {overdue.length > 10 && (
                   <div className="text-center py-2 text-[10px] text-gray-400">
@@ -1254,8 +1447,7 @@ export default function DashboardView({
               </div>
             ) : (
               <div className="text-center py-8">
-                <span className="text-2xl">🎉</span>
-                <div className="mt-1 text-sm text-gray-400">No overdue tasks!</div>
+                <div className="mt-1 text-sm text-gray-400">No overdue tasks</div>
               </div>
             )}
           </div>
@@ -1278,6 +1470,7 @@ export default function DashboardView({
               member={member}
               stats={stats}
               maxOverdue={teamWorkload.maxOverdue}
+              onOpen={() => openDrilldown(`งานของ ${member.name}`, filteredTasks.filter((task) => assignedNames(task).includes(member.name)))}
               animDelay={mi * 80}
             />
           ))}
@@ -1290,30 +1483,30 @@ export default function DashboardView({
         </div>
       </div>
 
-      {/* ── ⑤ Upcoming This Week ─────────────────────────────────────── */}
+      {/* ── ⑤ Upcoming ───────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-purple-100 bg-white shadow-sm">
         <div className="px-5 py-4 border-b border-purple-50">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-amber-400" />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Upcoming This Week</h3>
-            <span className="text-[10px] text-gray-400 ml-1">{metrics.dueThisWeek.length} tasks</span>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Upcoming</h3>
+            <span className="text-[10px] text-gray-400 ml-1">{upcoming.length} tasks</span>
           </div>
         </div>
         <div className="p-4 space-y-4">
           {upcomingByDay.length > 0 ? (
             upcomingByDay.map(([dateKey, tasks], di) => (
               <div key={dateKey} className="animate-magic-enter" style={{ animationDelay: `${di * 60}ms` }}>
-                <UpcomingDayGroup dateKey={dateKey} tasks={tasks} tabToBrand={brandData.tabToBrand} />
+                <UpcomingDayGroup dateKey={dateKey} tasks={tasks} brandNameForTask={brandNameForTask} />
               </div>
             ))
           ) : (
-            <div className="text-center py-6 text-sm text-gray-300">ไม่มีงานในสัปดาห์นี้</div>
+            <div className="text-center py-6 text-sm text-gray-300">ไม่มีงาน upcoming</div>
           )}
         </div>
       </div>
 
       {/* ── Brand Manager Modal ─────────────────────────────────────── */}
-      {showBrandManager && (
+      {canAdmin && showBrandManager && (
         <BrandManager
           confirmed={brandData.confirmed}
           newTabs={brandData.newTabs}

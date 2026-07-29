@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { createPortal } from "react-dom"
-import { loadTeamMembers, ROLE_CONFIG, ROLES } from "../lib/teamConfig"
+import { ROLE_CONFIG, ROLES } from "../lib/teamConfig"
 
 function MemberOption({ member, isSelected, onToggle }) {
   const rc = ROLE_CONFIG[member.role]
@@ -36,11 +36,11 @@ function MemberOption({ member, isSelected, onToggle }) {
 }
 
 /** Shared popup content used by both desktop dropdown and mobile bottom sheet */
-function PopupContent({ clientName, current, allMembers, hasAssignment, toggleMember, onUpdate, onClose }) {
+function PopupContent({ displayName, assignmentKey, current, allMembers, hasAssignment, toggleMember, onUpdate, onClose }) {
   return (
     <>
       <div className="text-[10px] font-bold uppercase tracking-wider text-purple-400 mb-1">
-        Assign Team — {clientName}
+        Assign Team — {displayName}
       </div>
 
       {ROLES.map((role) => {
@@ -62,6 +62,7 @@ function PopupContent({ clientName, current, allMembers, hasAssignment, toggleMe
                   onToggle={(name) => toggleMember(role, name)}
                 />
               ))}
+              {members.length === 0 && <div className="px-2 py-1 text-[10px] text-gray-300">ยังไม่มีสมาชิกใน role นี้</div>}
             </div>
           </div>
         )
@@ -69,7 +70,7 @@ function PopupContent({ clientName, current, allMembers, hasAssignment, toggleMe
 
       {hasAssignment && (
         <button
-          onClick={(e) => { e.stopPropagation(); onUpdate(clientName, {}); onClose() }}
+          onClick={(e) => { e.stopPropagation(); onUpdate(assignmentKey, {}); onClose() }}
           className="w-full rounded-lg border border-red-100 px-2 py-1.5 text-[10px] font-medium text-red-400 transition hover:bg-red-50 hover:text-red-600 active:bg-red-100"
         >
           Clear all
@@ -84,14 +85,14 @@ function PopupContent({ clientName, current, allMembers, hasAssignment, toggleMe
  * Desktop: positioned dropdown via portal.
  * Mobile (<640px): bottom sheet with backdrop.
  */
-export default function AssignTeam({ clientName, assignments, onUpdate, compact = false }) {
+export default function AssignTeam({ displayName, assignmentKey, legacyKey, assignments, members = [], onUpdate, compact = false }) {
   const [showPopup, setShowPopup] = useState(false)
   const btnRef = useRef(null)
   const popupRef = useRef(null)
   const [popupPos, setPopupPos] = useState({ top: 0, left: 0 })
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640)
 
-  const current = assignments[clientName] || {}
+  const current = assignments[assignmentKey] || assignments[legacyKey] || {}
 
   // Track viewport size
   useEffect(() => {
@@ -141,6 +142,8 @@ export default function AssignTeam({ clientName, assignments, onUpdate, compact 
       setShowPopup(false)
     }
     document.addEventListener("pointerdown", handler, true)
+    const onKeyDown = (event) => { if (event.key === "Escape") setShowPopup(false) }
+    document.addEventListener("keydown", onKeyDown)
 
     // Reposition on scroll/resize so it doesn't drift
     const reposition = () => updatePos()
@@ -149,6 +152,7 @@ export default function AssignTeam({ clientName, assignments, onUpdate, compact 
 
     return () => {
       document.removeEventListener("pointerdown", handler, true)
+      document.removeEventListener("keydown", onKeyDown)
       window.removeEventListener("scroll", reposition, true)
       window.removeEventListener("resize", reposition)
     }
@@ -168,15 +172,16 @@ export default function AssignTeam({ clientName, assignments, onUpdate, compact 
     } else {
       updated[role] = name
     }
-    onUpdate(clientName, updated)
+    onUpdate(assignmentKey, updated)
   }
 
-  const allMembers = loadTeamMembers()
+  const allMembers = members
   const hasAssignment = ROLES.some((r) => current[r])
 
   const popupContent = (
     <PopupContent
-      clientName={clientName}
+      displayName={displayName}
+      assignmentKey={assignmentKey}
       current={current}
       allMembers={allMembers}
       hasAssignment={hasAssignment}
@@ -191,7 +196,7 @@ export default function AssignTeam({ clientName, assignments, onUpdate, compact 
       {/* Display assigned members or assign button */}
       <button
         ref={btnRef}
-        onClick={(e) => { e.stopPropagation(); setShowPopup(!showPopup) }}
+        onClick={(e) => { e.stopPropagation(); setShowPopup((open) => !open) }}
         className={`flex items-center gap-1 rounded-lg transition-all ${
           compact ? "px-1 py-0.5" : "px-1.5 py-1"
         } ${showPopup ? "bg-purple-100 ring-1 ring-purple-300" : "hover:bg-purple-50"}`}
@@ -248,7 +253,7 @@ export default function AssignTeam({ clientName, assignments, onUpdate, compact 
               {/* Done button */}
               <div className="flex items-center justify-between mb-1">
                 <div className="text-xs font-bold uppercase tracking-wider text-purple-400">
-                  Assign Team — {clientName}
+                  Assign Team — {displayName}
                 </div>
                 <button
                   onClick={(e) => { e.stopPropagation(); setShowPopup(false) }}
@@ -277,6 +282,7 @@ export default function AssignTeam({ clientName, assignments, onUpdate, compact 
                           onToggle={(name) => toggleMember(role, name)}
                         />
                       ))}
+                      {members.length === 0 && <div className="px-2 py-1 text-[10px] text-gray-300">ยังไม่มีสมาชิกใน role นี้</div>}
                     </div>
                   </div>
                 )
@@ -284,7 +290,7 @@ export default function AssignTeam({ clientName, assignments, onUpdate, compact 
 
               {hasAssignment && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); onUpdate(clientName, {}); setShowPopup(false) }}
+                  onClick={(e) => { e.stopPropagation(); onUpdate(assignmentKey, {}); setShowPopup(false) }}
                   className="w-full rounded-lg border border-red-200 px-3 py-2.5 text-xs font-medium text-red-500 transition active:bg-red-100"
                 >
                   Clear all

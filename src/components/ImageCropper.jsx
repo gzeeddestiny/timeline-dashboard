@@ -16,7 +16,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
   const CANVAS_SIZE = 220
   const OUTPUT_SIZE = 128
 
-  const [scale, setScale] = useState(1)
+  const [zoom, setZoom] = useState(0.26)
   const [loaded, setLoaded] = useState(false)
 
   // Load image
@@ -30,7 +30,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
       stateRef.current.scale = fitScale
       stateRef.current.x = (CANVAS_SIZE - img.width * fitScale) / 2
       stateRef.current.y = (CANVAS_SIZE - img.height * fitScale) / 2
-      setScale(fitScale)
+      setZoom((fitScale - (CANVAS_SIZE * 0.3) / minDim) / ((CANVAS_SIZE * 3) / minDim - (CANVAS_SIZE * 0.3) / minDim))
       setLoaded(true)
     }
     img.src = imageSrc
@@ -115,7 +115,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
     s.x = cx - (cx - s.x) * (newScale / oldScale)
     s.y = cy - (cy - s.y) * (newScale / oldScale)
     s.scale = newScale
-    setScale(newScale)
+    setZoom((newScale - minScale) / (maxScale - minScale))
     draw()
   }
 
@@ -136,17 +136,8 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
     s.x = cx - (cx - s.x) * (newScale / oldScale)
     s.y = cy - (cy - s.y) * (newScale / oldScale)
     s.scale = newScale
-    setScale(newScale)
+    setZoom(val)
     draw()
-  }
-
-  const sliderValue = () => {
-    const img = imgRef.current
-    if (!img) return 0.5
-    const minDim = Math.min(img.width, img.height)
-    const minScale = (CANVAS_SIZE * 0.3) / minDim
-    const maxScale = (CANVAS_SIZE * 3) / minDim
-    return (scale - minScale) / (maxScale - minScale)
   }
 
   // Crop & output
@@ -204,7 +195,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
             min="0"
             max="1"
             step="0.01"
-            value={sliderValue()}
+            value={zoom}
             onChange={onSliderChange}
             className="flex-1 h-1.5 accent-purple-500"
           />

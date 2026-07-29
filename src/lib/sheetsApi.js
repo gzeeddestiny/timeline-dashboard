@@ -5,12 +5,16 @@
 //   B = Topic      (Content / Topic)
 //   C = Responsibility
 //   D = Due Date   (date cell)
+//   E = Actual Submit
+//   F = Task ID    (hidden, stable UUID)
 //
 // Each tab name  = Client Name   (e.g. "Nike TH", "PTT Exploration")
 // Spreadsheet title → Month label (parsed from the sheet name itself):
 //   "Magic_Project Timeline Feb 26" → "FEB 26"
 //   "MAGIC_Timeline Internal"       → "Internal"
 // ─────────────────────────────────────────────────────────────────────────────
+
+import { bangkokDate, daysFrom, parseSheetDate } from "./dates.js"
 
 const BASE_URL = "https://sheets.googleapis.com/v4/spreadsheets"
 
@@ -58,9 +62,7 @@ export function getFileColor(task, colorMap) {
 //   "(point+pang)Skyline Pool Villa VDO แก่งกระจาน"   → "Skyline Pool Villa"
 //   "(Point+RK)One box main 3 clips Jan 26"          → "One box"
 //
-// Strategy: auto-clean + allow manual override stored in localStorage.
-
-const BRAND_STORAGE_KEY = "magic-brand-names"
+// Strategy: auto-clean; shared per-tab overrides live in Supabase.
 
 // Noise words to strip (case-insensitive) — common project descriptors
 const NOISE_WORDS = [
@@ -87,174 +89,12 @@ export function extractBrandName(tabTitle) {
   return s || tabTitle.replace(/^\([^)]*\)\s*/, "").trim()
 }
 
-/**
- * Brand List — confirmed client brands stored in localStorage.
- *
- * Structure: {
- *   confirmedBrands: {
- *     "brandName": { tabs: ["raw tab 1", "raw tab 2"] }
- *   }
- * }
- *
- * - confirmed = user has reviewed & accepted this brand name
- * - tabs = which raw Google Sheet tab names map to this brand
- * - new tabs that don't match any confirmed brand → shown as "new"
- */
-
-export function loadBrandList() {
-  try {
-    const stored = localStorage.getItem(BRAND_STORAGE_KEY)
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      if (parsed.confirmedBrands) return parsed
-    }
-  } catch { /* ignore */ }
-  return { confirmedBrands: {} }
-}
-
-export function saveBrandList(list) {
-  localStorage.setItem(BRAND_STORAGE_KEY, JSON.stringify(list))
-}
-
-/**
- * Given all current tab names from synced data, compute:
- * - confirmed: brands the user has already confirmed (with merged tabs)
- * - newTabs: tabs that don't match any confirmed brand (need review)
- * - tabToBrand: lookup map for resolving any tab → brand name
- */
-export function computeBrandStatus(allTabNames) {
-  const list = loadBrandList()
-  const confirmed = list.confirmedBrands // { brandName: { tabs: [...] } }
-
-  // Build set of all tabs that are already mapped to a confirmed brand
-  const mappedTabs = new Set()
-  Object.values(confirmed).forEach((b) => {
-    b.tabs.forEach((t) => mappedTabs.add(t))
-  })
-
-  // Find new (unmapped) tabs
-  const newTabs = allTabNames.filter((t) => !mappedTabs.has(t))
-
-  // Build tabToBrand lookup
-  const tabToBrand = {}
-  Object.entries(confirmed).forEach(([brand, b]) => {
-    b.tabs.forEach((t) => { tabToBrand[t] = brand })
-  })
-  // New tabs get auto-extracted name (but not confirmed yet)
-  newTabs.forEach((t) => {
-    tabToBrand[t] = extractBrandName(t)
-  })
-
-  return { confirmed, newTabs, tabToBrand }
-}
-
-/** Confirm a brand: assign a name and map tabs to it */
-export function confirmBrand(brandName, tabs) {
-  const list = loadBrandList()
-  // Remove these tabs from any other brand first
-  Object.values(list.confirmedBrands).forEach((b) => {
-    b.tabs = b.tabs.filter((t) => !tabs.includes(t))
-  })
-  // Clean up empty brands
-  Object.keys(list.confirmedBrands).forEach((k) => {
-    if (list.confirmedBrands[k].tabs.length === 0) delete list.confirmedBrands[k]
-  })
-  // Add/update brand
-  if (!list.confirmedBrands[brandName]) {
-    list.confirmedBrands[brandName] = { tabs: [...tabs] }
-  } else {
-    const existing = new Set(list.confirmedBrands[brandName].tabs)
-    tabs.forEach((t) => existing.add(t))
-    list.confirmedBrands[brandName].tabs = [...existing]
-  }
-  saveBrandList(list)
-}
-
-/** Rename an existing confirmed brand */
-export function renameBrand(oldName, newName) {
-  const list = loadBrandList()
-  if (!list.confirmedBrands[oldName]) return
-  const data = list.confirmedBrands[oldName]
-  delete list.confirmedBrands[oldName]
-  list.confirmedBrands[newName] = data
-  saveBrandList(list)
-}
-
-/** Remove a confirmed brand (tabs become "new" again) */
-export function removeBrand(brandName) {
-  const list = loadBrandList()
-  delete list.confirmedBrands[brandName]
-  saveBrandList(list)
-}
-
-// ── Legacy compat (used by DashboardView) ──
-export function loadBrandMap() {
-  const list = loadBrandList()
-  const map = {}
-  Object.entries(list.confirmedBrands).forEach(([brand, b]) => {
-    b.tabs.forEach((t) => { map[t] = brand })
-  })
-  return map
-}
-export function saveBrandMap() {} // no-op, use confirmBrand/renameBrand instead
-export function resolveBrandName(tabTitle) {
-  const map = loadBrandMap()
-  if (map[tabTitle]) return map[tabTitle]
-  return extractBrandName(tabTitle)
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Extract spreadsheet ID from any Google Sheets URL */
 export function parseSheetId(url) {
   const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)
   return match ? match[1] : null
-}
-
-/**
- * Convert Google Sheets date serial number → ISO string (YYYY-MM-DD)
- * Sheets epoch = Dec 30 1899; Unix epoch offset = 25569 days
- */
-function serialToISO(serial) {
-  const ms = Math.round((serial - 25569) * 86400 * 1000)
-  return new Date(ms).toISOString().split("T")[0]
-}
-
-/**
- * Robustly parse a date value that comes from Google Sheets.
- * With UNFORMATTED_VALUE: date cells → number (serial), text → string
- */
-function parseDueDate(raw) {
-  if (raw === null || raw === undefined || raw === "") return ""
-
-  // Serial number (most reliable — comes from UNFORMATTED_VALUE)
-  if (typeof raw === "number") return serialToISO(raw)
-
-  const str = String(raw).trim()
-  if (!str) return ""
-
-  // ISO format  e.g. "2026-04-01"
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str
-
-  // MM/DD/YYYY  e.g. "4/1/2026"
-  const mdy = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (mdy) {
-    const [, m, d, y] = mdy
-    return new Date(+y, +m - 1, +d).toISOString().split("T")[0]
-  }
-
-  // DD/MM/YYYY  e.g. "01/04/2026"
-  const dmy = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
-  if (dmy) {
-    const [, d, m, y] = dmy
-    return new Date(+y, +m - 1, +d).toISOString().split("T")[0]
-  }
-
-  // Fallback: let Date parse it (handles "April 1, 2026" etc.)
-  const fallback = new Date(str)
-  if (!isNaN(fallback.getTime())) return fallback.toISOString().split("T")[0]
-
-  return str // last resort: return as-is
 }
 
 /**
@@ -299,10 +139,9 @@ function monthFromTitle(title) {
 /**
  * Fetch all tasks from every connected Google Sheet.
  * @param {Array<{id: number, url: string}>} sheetList
- * @returns {Promise<Array>} flat array of task objects
+ * @returns {Promise<{tasks: Array, issues: Array}>}
  */
-export async function fetchAllSheetsData(sheetList) {
-  const apiKey = import.meta.env.VITE_GOOGLE_SHEETS_API_KEY
+export async function fetchAllSheetsData(sheetList, apiKey = import.meta.env?.VITE_GOOGLE_SHEETS_API_KEY) {
 
   if (!apiKey || apiKey === "your_api_key_here") {
     throw new Error(
@@ -311,9 +150,10 @@ export async function fetchAllSheetsData(sheetList) {
   }
 
   const allTasks = []
+  const issues = []
   let nextId = 1
-  const seenTabs = new Set()          // deduplicate same tab name across spreadsheets
   const seenSpreadsheets = new Set()  // deduplicate same spreadsheet fetched twice
+  const seenTaskKeys = new Set()
 
   for (const sheet of sheetList) {
     const spreadsheetId = parseSheetId(sheet.url)
@@ -329,6 +169,7 @@ export async function fetchAllSheetsData(sheetList) {
 
     // 1️⃣  Spreadsheet metadata → get title + all tab names
     const metaRes = await fetch(`${BASE_URL}/${spreadsheetId}?key=${apiKey}`)
+    if (!metaRes.ok) throw new Error(`Google Sheets metadata failed (${metaRes.status})`)
     const meta    = await metaRes.json()
 
     if (meta.error) {
@@ -359,10 +200,11 @@ export async function fetchAllSheetsData(sheetList) {
       gidMap.set(info.title.trim(), info.gid)
     }
 
-    const ranges = tabNames.map((t) => `ranges=${encodeURIComponent(`${t}!A2:E`)}`).join("&")
+    const ranges = tabNames.map((t) => `ranges=${encodeURIComponent(`${t}!A2:F`)}`).join("&")
     const batchUrl = `${BASE_URL}/${spreadsheetId}/values:batchGet?${ranges}&key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`
 
     const batchRes = await fetch(batchUrl)
+    if (!batchRes.ok) throw new Error(`Google Sheets data failed (${batchRes.status})`)
     const batchData = await batchRes.json()
 
     if (batchData.error) {
@@ -389,13 +231,9 @@ export async function fetchAllSheetsData(sheetList) {
         tabGid = match?.gid ?? 0
       }
 
-      // Skip duplicate tab names already seen from another spreadsheet
-      if (seenTabs.has(tabTitle)) continue
-      seenTabs.add(tabTitle)
-
       for (const [rowIdx, row] of (valueRange.values ?? []).entries()) {
         // A=status(bool)  B=topic  C=responsibility  D=dueDate  E=actualSubmit
-        const [statusRaw, topic, responsibility, dueDateRaw, actualSubmitRaw] = row
+        const [statusRaw, topic, responsibility, dueDateRaw, actualSubmitRaw, taskIdRaw] = row
 
         if (!topic?.toString().trim()) continue   // skip blank rows
 
@@ -404,7 +242,23 @@ export async function fetchAllSheetsData(sheetList) {
           statusRaw === 1 ||
           String(statusRaw).toLowerCase() === "true"
 
-        const parsedDate = parseDueDate(dueDateRaw)
+        const taskId = String(taskIdRaw || "").trim()
+        const source = { spreadsheetId, sheetGid: tabGid, rowIndex: rowIdx + 2, clientName: tabTitle }
+        if (!taskId) {
+          issues.push({ ...source, type: "missing_task_id", message: "Task ID is blank" })
+          continue
+        }
+        const stableKey = `${spreadsheetId}:${tabGid}:${taskId}`
+        if (seenTaskKeys.has(stableKey)) {
+          issues.push({ ...source, type: "duplicate_task_id", message: `Duplicate Task ID: ${taskId}` })
+          continue
+        }
+        seenTaskKeys.add(stableKey)
+
+        const parsedDate = parseSheetDate(dueDateRaw)
+        if (dueDateRaw && !parsedDate) issues.push({ ...source, type: "invalid_due_date", message: `Invalid due date: ${dueDateRaw}` })
+        const parsedActualSubmit = parseSheetDate(actualSubmitRaw)
+        if (actualSubmitRaw && !parsedActualSubmit) issues.push({ ...source, type: "invalid_actual_submit", message: `Invalid actual submit: ${actualSubmitRaw}` })
 
         allTasks.push({
           id:             nextId++,
@@ -416,14 +270,15 @@ export async function fetchAllSheetsData(sheetList) {
           responsibility: (responsibility ?? "").toString().trim(),
           dueDate:        parsedDate,
           rowIndex:       rowIdx + 2,  // +2: range starts at row 2 (row 1 = header)
-          actualSubmit:   parseDueDate(actualSubmitRaw),
           sheetGid:       tabGid,
+          taskId,
+          actualSubmit:   parsedActualSubmit,
         })
       }
     }
   }
 
-  return allTasks
+  return { tasks: allTasks, issues }
 }
 
 // ── Categorizer ───────────────────────────────────────────────────────────────
@@ -432,14 +287,12 @@ export async function fetchAllSheetsData(sheetList) {
  * Split flat task array into overdue vs upcoming.
  *
  * Rules:
- *  - Tasks with no due date → excluded from ALL lists
+ *  - Tasks with no due date → unscheduled
  *  - Overdue  : not done + due date is in the past
- *  - Upcoming : not done + due date is 0–10 days from today (inclusive)
- *  - Tasks due > 10 days away → not shown anywhere
+ *  - Upcoming : not done + due date is today or later
  */
 export function categorizeTasks(tasks) {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const today = bangkokDate()
 
   // Per-client progress stats — count ALL tasks that have a topic
   const clientStats = {}
@@ -451,7 +304,7 @@ export function categorizeTasks(tasks) {
     if (t.done) clientStats[statsKey].done++
   })
 
-  // Drop rows that have no valid due date
+  // Keep undated tasks visible; they need scheduling rather than disappearing.
   const withDate = tasks.filter((t) => {
     if (!t.dueDate) return false
     const d = new Date(t.dueDate)
@@ -459,18 +312,15 @@ export function categorizeTasks(tasks) {
   })
 
   const overdue = withDate
-    .filter((t) => !t.done && new Date(t.dueDate) < today)
+    .filter((t) => !t.done && daysFrom(t.dueDate, today) < 0)
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)) // oldest (most overdue) first
 
   const upcoming = withDate
-    .filter((t) => {
-      if (t.done) return false
-      const daysLeft = Math.floor((new Date(t.dueDate) - today) / 86_400_000)
-      return daysLeft >= 0 && daysLeft <= 10
-    })
+    .filter((t) => !t.done && daysFrom(t.dueDate, today) >= 0)
     .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)) // soonest (today) first
 
-  return { overdue, upcoming, clientStats, allTasks: withDate }
+  const unscheduled = tasks.filter((task) => !task.done && !task.dueDate)
+  return { overdue, upcoming, unscheduled, clientStats, allTasks: tasks }
 }
 
 // ── Timeline Data Preparation ────────────────────────────────────────────────
@@ -566,29 +416,4 @@ export function prepareTimelineData(allTasks) {
     },
     totalDays,
   }
-}
-
-// ── Task Completion Write-back ────────────────────────────────────────────────
-
-/**
- * Write task completion status back to Google Sheet via Apps Script Web App.
- * Requires VITE_APPS_SCRIPT_URL env var to be set.
- *
- * Updates:
- *   Column A (row rowIndex): TRUE / FALSE
- *   Column E (row rowIndex): actualSubmit date string, or cleared
- */
-export async function updateTaskCompletion({ spreadsheetId, tabName, rowIndex, done, actualSubmit }) {
-  const scriptUrl = import.meta.env.VITE_APPS_SCRIPT_URL
-  if (!scriptUrl) return false
-  try {
-    const res = await fetch(scriptUrl, {
-      method: "POST",
-      // text/plain avoids CORS preflight (required for Google Apps Script)
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ spreadsheetId, tabName, rowIndex, done, actualSubmit }),
-      redirect: "follow",
-    })
-    return res.ok
-  } catch { return false }
 }
