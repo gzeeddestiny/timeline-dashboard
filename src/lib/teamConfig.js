@@ -4,14 +4,7 @@
 // ROLE_CONFIG เป็น static — แก้ที่นี่ถ้าต้องการเพิ่ม role ใหม่
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEFAULT_MEMBERS = [
-  { name: "Tony",  role: "creative", avatar: "" },
-  { name: "RK",    role: "creative", avatar: "" },
-  { name: "Pleng", role: "ae",       avatar: "" },
-  { name: "Aom",   role: "ae",       avatar: "" },
-  { name: "Boom",  role: "pm",       avatar: "" },
-  { name: "Point", role: "pm",       avatar: "" },
-]
+const DEFAULT_MEMBERS = []
 
 const STORAGE_KEY = "magic-team-members"
 

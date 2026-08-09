@@ -17,8 +17,9 @@ Google OAuth redirect สำหรับ local ปกติคือ `http://127
 
 - Browser ใช้เฉพาะ `VITE_SUPABASE_URL` และ `VITE_SUPABASE_PUBLISHABLE_KEY`
 - Vercel Functions ใช้ `SUPABASE_URL` และ `SUPABASE_SECRET_KEY`; ห้ามขึ้นต้น secret ด้วย `VITE_`
-- เพิ่ม `task_workflow`, `assignments`, `brands` และ `notifications` เข้า Supabase Realtime publication เพื่อรับการเปลี่ยนแปลงทันที; polling 30 วินาทียังคงเป็น fallback
+- เพิ่ม `sheets`, `team_members`, `task_workflow`, `assignments`, `brands`, `sync_runs` และ `notifications` เข้า Supabase Realtime publication เพื่อรับการเปลี่ยนแปลงทันที; polling 30 วินาทียังคงเป็น fallback
 - RLS บังคับ allowlist และ role ที่ database: active user อ่าน/แก้ workflow และ assignment ได้, เฉพาะ Admin แก้ access, Sheets, ทีม และ brand mapping
+- ชื่อ/role/รูปโปรไฟล์ทีมเก็บใน `team_members`; การแก้ทั้งชุดใช้ `replace_team_members` transaction เดียวและจำกัดรูปที่ crop แล้วไม่เกิน 100 KB
 - เปิด Supabase Cron และ `pg_net`, สร้าง Vault secrets ชื่อ `timeline_dashboard_url` กับ `timeline_cron_secret` แล้วรัน `supabase/cron.sql`; ระบบจะ sync ทุก 30 นาทีและ queue digest เวลา 09:00 Asia/Bangkok โดยยังไม่มีการส่งอีเมลจริง
 
 ## Sync and freshness
@@ -34,7 +35,7 @@ select vault.create_secret('<same value as CRON_SYNC_SECRET>', 'timeline_cron_se
 
 จากนั้นรัน `supabase/cron.sql` และตรวจ `cron.job_run_details` คู่กับ `public.sync_runs` การ sync จริงต้องจบภายใน 45 วินาที; ถ้าเกินให้กลับ Maintenance และไม่เพิ่ม timeout เพื่อกลบปัญหา
 
-การเปลี่ยน Done เรียก `/api/completion` เพื่อเขียน Apps Script ก่อนอัปเดต snapshot; ถ้าล้มเหลว frontend rollback ค่าทันที Workflow/note/priority ใช้ `/api/workflow` และเก็บ audit event ผ่าน database trigger หน้า Management แสดง Recent Activity พร้อมผู้แก้และเวลา (ประวัติเก่าก่อนเพิ่ม `actor_email` จะแสดงเป็น System)
+การเปลี่ยน Done เรียก `/api/completion` เพื่อเขียน Apps Script ก่อนอัปเดต snapshot; ถ้าล้มเหลว frontend rollback ค่าทันที Workflow/note/priority และ assignment ใช้ database RPC แก้เฉพาะ field/role ที่ส่งมา จึงไม่เขียนทับกันเมื่อ save พร้อมกัน รายการที่ save ไม่สำเร็จเก็บเป็น retry outbox เฉพาะ browser session ทุก shared mutation เก็บ audit event ผ่าน database trigger หน้า Management แสดง Recent Activity พร้อมผู้แก้และเวลา (ประวัติเก่าก่อนเพิ่ม `actor_email` จะแสดงเป็น System)
 
 ถ้า sync process หยุดกลางทาง ระบบจะถือ lock ที่เก่ากว่า 10 นาทีเป็น failed แล้วเริ่มรอบใหม่ได้อัตโนมัติ เพื่อไม่ให้ Manual Sync ค้างถาวร
 

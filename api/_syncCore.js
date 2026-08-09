@@ -78,9 +78,8 @@ export async function runSync({ admin, force = false, triggerType = force ? "man
     if (runError) throw runError
     runId = run.id
 
-    const { data: sheetRows, error: sheetError } = await admin.from("sheets").select("spreadsheet_id,url").eq("active", true)
-    if (sheetError) throw sheetError
-    const sheets = (sheetRows || []).map((row) => ({ spreadsheetId: row.spreadsheet_id, url: row.url }))
+    const sheetRows = await fetchAllRows((from, to) => admin.from("sheets").select("spreadsheet_id,url").eq("active", true).range(from, to))
+    const sheets = sheetRows.map((row) => ({ spreadsheetId: row.spreadsheet_id, url: row.url }))
     const googleKey = process.env.GOOGLE_SHEETS_API_KEY
     if (!googleKey) throw new Error("Google Sheets server API key is not configured")
     const previousTasks = await fetchAllRows((from, to) => admin.from("tasks_current").select("*").eq("active", true).range(from, to))
@@ -101,20 +100,19 @@ export async function runSync({ admin, force = false, triggerType = force ? "man
       if (error) throw error
     }
 
-    const [workflowRows, teamResult, brandResult, assignmentResult] = await Promise.all([
+    const [workflowRows, teamRows, brandRows, assignmentRows] = await Promise.all([
       fetchAllRows((from, to) => admin.from("task_workflow").select("task_key,status").range(from, to)),
-      admin.from("team_members").select("name,role,avatar"),
-      admin.from("brands").select("tab_key,brand_name"),
-      admin.from("assignments").select("brand_key,value"),
+      fetchAllRows((from, to) => admin.from("team_members").select("name,role,avatar").range(from, to)),
+      fetchAllRows((from, to) => admin.from("brands").select("tab_key,brand_name").range(from, to)),
+      fetchAllRows((from, to) => admin.from("assignments").select("brand_key,value").range(from, to)),
     ])
-    for (const result of [teamResult, brandResult, assignmentResult]) if (result.error) throw result.error
     const workflow = Object.fromEntries(workflowRows.map((row) => [row.task_key, row.status]))
-    const brands = Object.fromEntries((brandResult.data || []).map((row) => [row.tab_key, row.brand_name]))
-    const assignments = Object.fromEntries((assignmentResult.data || []).map((row) => [row.brand_key, row.value || {}]))
+    const brands = Object.fromEntries(brandRows.map((row) => [row.tab_key, row.brand_name]))
+    const assignments = Object.fromEntries(assignmentRows.map((row) => [row.brand_key, row.value || {}]))
     const metricTasks = tasks.map((task) => ({ ...task, taskKey: taskKey(task) }))
-    let metricRows = buildMetricRows(metricTasks, workflow, teamResult.data || [], brands, assignments, runId)
+    let metricRows = buildMetricRows(metricTasks, workflow, teamRows, brands, assignments, runId)
     const today = bangkokDate()
-    metricRows = addTransitionMetrics(metricRows, previousTasks || [], metricTasks, teamResult.data || [], brands, assignments, today)
+    metricRows = addTransitionMetrics(metricRows, previousTasks || [], metricTasks, teamRows, brands, assignments, today)
     const { data: existingMetrics, error: existingMetricError } = await admin
       .from("daily_metrics")
       .select("dimension,dimension_key,metrics")

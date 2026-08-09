@@ -13,6 +13,19 @@ export function validateWorkflow(body) {
   return null
 }
 
+export function workflowRpcArgs(body, actorId) {
+  return {
+    p_task_key: body.key,
+    p_status: body.status ?? null,
+    p_has_status: body.status !== undefined,
+    p_note: body.note ?? null,
+    p_has_note: body.note !== undefined,
+    p_priority: body.priority ?? null,
+    p_has_priority: body.priority !== undefined,
+    p_actor: actorId,
+  }
+}
+
 export function blockedRecipients(access, assignedNames, responsibility, actorEmail) {
   return (access || []).filter((entry) => entry.email !== actorEmail && entry.member_name && (
     assignedNames.has(entry.member_name) || responsibilityMentions(responsibility, entry.member_name)
@@ -56,25 +69,18 @@ export default async function handler(request, response) {
     const { data: task, error: taskError } = await admin.from("tasks_current").select("*").eq("task_key", body.key).maybeSingle()
     if (taskError) throw taskError
     if (!task) return send(response, 404, { error: "Task not found" })
-    const { data: existing, error: existingError } = await admin.from("task_workflow").select("*").eq("task_key", body.key).maybeSingle()
+    const { data: existing, error: existingError } = await admin.from("task_workflow").select("status").eq("task_key", body.key).maybeSingle()
     if (existingError) throw existingError
 
-    const row = {
-      task_key: body.key,
-      status: body.status ?? existing?.status ?? "not_started",
-      note: body.note ?? existing?.note ?? "",
-      priority: body.priority !== undefined ? body.priority : existing?.priority ?? null,
-      updated_by: user.id,
-      updated_at: new Date().toISOString(),
-    }
-    const { data, error } = await admin.from("task_workflow").upsert(row, { onConflict: "task_key" }).select().single()
+    const { data, error } = await admin.rpc("patch_task_workflow", workflowRpcArgs(body, user.id))
     if (error) throw error
+    const saved = Array.isArray(data) ? data[0] : data
     let warning = null
     if (body.status === "blocked" && existing?.status !== "blocked") {
       try { await notifyBlocked(admin, task, access.email) }
       catch (notifyError) { console.error("[workflow:notify]", notifyError); warning = "Workflow saved but notification could not be queued" }
     }
-    return send(response, 200, warning ? { ...data, warning } : data)
+    return send(response, 200, warning ? { ...saved, warning } : saved)
   } catch (error) {
     console.error("[workflow]", error)
     return send(response, 502, { error: error.message || "Workflow save failed" })

@@ -17,10 +17,14 @@ async function filesUnder(path) {
 
 const tracked = execFileSync("git", ["ls-files", "-co", "--exclude-standard"], { encoding: "utf8" })
   .trim().split("\n").filter(Boolean).map((file) => resolve(file))
+const localEnv = (await readdir(resolve("."), { withFileTypes: true }))
+  .filter((entry) => entry.isFile() && /^\.env(?:\.|$)/.test(entry.name))
+  .map((entry) => resolve(entry.name))
+const localEnvSet = new Set(localEnv)
 const dist = await filesUnder(resolve("dist"))
-const files = [...new Set([...tracked, ...dist])].filter((file) => textExtensions.has(extname(file)))
+const files = [...new Set([...tracked, ...localEnv, ...dist])].filter((file) => localEnvSet.has(file) || textExtensions.has(extname(file)))
 const tokenPattern = new RegExp("gh" + "[pousr]_[A-Za-z0-9_]{20,}")
-const legacyNames = ["GITHUB_TOKEN", "GIST_ID", "APPS_SCRIPT_URL"].map((name) => "VITE_" + name)
+const legacyNames = ["GITHUB_TOKEN", "GIST_ID", "APPS_SCRIPT_URL", "GOOGLE_SHEETS_API_KEY"].map((name) => "VITE_" + name)
 const appsScriptUrl = "https://script.google.com/" + "macros/s/"
 
 for (const file of files) {

@@ -141,11 +141,11 @@ function monthFromTitle(title) {
  * @param {Array<{id: number, url: string}>} sheetList
  * @returns {Promise<{tasks: Array, issues: Array}>}
  */
-export async function fetchAllSheetsData(sheetList, apiKey = import.meta.env?.VITE_GOOGLE_SHEETS_API_KEY) {
+export async function fetchAllSheetsData(sheetList, apiKey) {
 
   if (!apiKey || apiKey === "your_api_key_here") {
     throw new Error(
-      "Missing API key — open .env and set VITE_GOOGLE_SHEETS_API_KEY, then restart the dev server."
+      "Missing server-side Google Sheets API key."
     )
   }
 
@@ -208,8 +208,7 @@ export async function fetchAllSheetsData(sheetList, apiKey = import.meta.env?.VI
     const batchData = await batchRes.json()
 
     if (batchData.error) {
-      console.warn(`[sheetsApi] batchGet error for "${spreadsheetTitle}":`, batchData.error.message)
-      continue
+      throw new Error(`Google Sheets batchGet failed for "${spreadsheetTitle}": ${batchData.error.message}`)
     }
 
     for (const valueRange of batchData.valueRanges ?? []) {

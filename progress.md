@@ -1,6 +1,6 @@
 # Timeline Dashboard — Hardening status
 
-> Updated: 2026-07-29
+> Updated: 2026-08-10
 
 ## Current architecture
 
@@ -22,7 +22,7 @@ Stable task identity comes from the hidden Google Sheets Task ID column.
 | Remark / priority / workflow | `spreadsheetId:sheetGid:taskId` |
 | Team members | `all` |
 
-The client uses Supabase Realtime plus 30-second/focus refresh. Pending or failed local edits are protected from refresh until saved successfully.
+The client uses Supabase Realtime plus 30-second/focus refresh. Sheets, team profiles, brand data, assignments and workflow all converge from Supabase; pending or failed local edits are protected from refresh until saved successfully.
 
 ## Views
 
@@ -54,4 +54,6 @@ npm run security:scan
 - Added My Work, Management freshness/aging/risk/trend, Admin access management and notification center
 - Added idempotent admin bootstrap and Gist migration scripts
 - Added authenticated 30-minute Supabase Cron sync, shared sync core, CI and build-time secret scanning
+- Added atomic workflow field patches and transactional team/profile replacement so concurrent saves cannot overwrite unrelated data
+- Removed browser-side Google API access and blocked legacy secret-prefixed Vite environments at startup
 - Pending final configured Supabase browser acceptance and production environment rollout

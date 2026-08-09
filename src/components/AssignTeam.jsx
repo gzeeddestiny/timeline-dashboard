@@ -70,7 +70,7 @@ function PopupContent({ displayName, assignmentKey, current, allMembers, hasAssi
 
       {hasAssignment && (
         <button
-          onClick={(e) => { e.stopPropagation(); onUpdate(assignmentKey, {}); onClose() }}
+          onClick={(e) => { e.stopPropagation(); onUpdate(assignmentKey, {}, { clear: true }); onClose() }}
           className="w-full rounded-lg border border-red-100 px-2 py-1.5 text-[10px] font-medium text-red-400 transition hover:bg-red-50 hover:text-red-600 active:bg-red-100"
         >
           Clear all
@@ -172,7 +172,7 @@ export default function AssignTeam({ displayName, assignmentKey, legacyKey, assi
     } else {
       updated[role] = name
     }
-    onUpdate(assignmentKey, updated)
+    onUpdate(assignmentKey, updated, { role, member: updated[role] || null })
   }
 
   const allMembers = members

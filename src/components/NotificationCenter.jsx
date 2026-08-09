@@ -13,10 +13,22 @@ export default function NotificationCenter({ configured, email, onOpenTask }) {
     let active = true
     const refresh = () => listNotifications().then((next) => { if (active) { setItems(next); setError("") } }).catch((loadError) => { if (active) setError(loadError.message) })
     refresh()
+    const timer = setInterval(refresh, 30_000)
+    const onVisible = () => { if (document.visibilityState === "visible") refresh() }
+    window.addEventListener("focus", refresh)
+    document.addEventListener("visibilitychange", onVisible)
     const channel = supabase.channel(`notifications:${email}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `recipient_email=eq.${email}` }, refresh)
-      .subscribe()
-    return () => { active = false; supabase.removeChannel(channel) }
+      .subscribe((status, channelError) => {
+        if (active && channelError) setError(`Realtime notification ขัดข้อง: ${channelError.message || status}`)
+      })
+    return () => {
+      active = false
+      clearInterval(timer)
+      window.removeEventListener("focus", refresh)
+      document.removeEventListener("visibilitychange", onVisible)
+      supabase.removeChannel(channel)
+    }
   }, [configured, email])
 
   if (!configured) return null

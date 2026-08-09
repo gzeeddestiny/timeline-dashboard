@@ -1,8 +1,8 @@
 import React, { Suspense, lazy, useState, useEffect, useRef, useCallback } from "react"
 import TaskTable, { CompletedClients } from "./components/TimelineTable"
-import { fetchAllSheetsData, categorizeTasks, extractBrandName } from "./lib/sheetsApi"
+import { categorizeTasks, extractBrandName } from "./lib/sheetsApi"
 import { matchMembers, loadTeamMembers, saveTeamMembers, refreshTeamMembers } from "./lib/teamConfig"
-import { cacheSharedState, loadCachedSharedState, mergeRemote, normalizeBrandKey, parseSheetUrl, sheetsFromLegacyHash, tabKey, taskKey as sharedTaskKey } from "./lib/sharedState"
+import { cachePendingWrites, cacheSharedState, loadCachedSharedState, loadPendingWrites, mergeRemote, normalizeBrandKey, parseSheetUrl, sheetsFromLegacyHash, tabKey, taskKey as sharedTaskKey } from "./lib/sharedState"
 import { fetchSystemState, patchSystemState, renameSystemBrand, systemSyncStatus, triggerSystemSync, updateSystemCompletion } from "./lib/fullSystem"
 import { isSupabaseConfigured, supabase } from "./lib/supabase"
 import TeamFilterBar from "./components/TeamFilterBar"
@@ -22,6 +22,27 @@ function sessionValue(key, fallback = null) {
   if (value !== null) sessionStorage.setItem(key, value)
   localStorage.removeItem(key)
   return value ?? fallback
+}
+
+function overlayPendingRecords(base, pending, resource) {
+  const next = { ...(base || {}) }
+  pending.filter((item) => item.resource === resource).forEach(({ key, value }) => {
+    if (value === null || value === "" || (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0)) delete next[key]
+    else next[key] = value
+  })
+  return next
+}
+
+function overlayPendingSheets(base, pending) {
+  const next = Object.fromEntries((base || []).map((sheet) => [sheet.spreadsheetId, sheet]))
+  pending.filter((item) => item.resource === "sheets").forEach(({ key, value }) => {
+    if (value === null) delete next[key]
+    else {
+      const sheet = parseSheetUrl(value)
+      if (sheet) next[key] = sheet
+    }
+  })
+  return Object.values(next)
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -61,13 +82,15 @@ const SYNC_COOLDOWN_MS = 5 * 60 * 1000 // 5 minutes between auto-syncs
 
 export default function App() {
   const { access, user, signOut } = useAuth()
-  const isAdmin = access?.role === "admin"
+  const isAdmin = access?.role === "admin" && isSupabaseConfigured
   const [cachedShared] = useState(loadCachedSharedState)
+  const [initialPendingWrites] = useState(loadPendingWrites)
   const [now, setNow] = useState(() => Date.now())
   const [sheets, setSheets] = useState(() => {
-    if (cachedShared?.sheets) return cachedShared.sheets
-    try { return JSON.parse(sessionValue("magic-sheets", "[]")).map((s) => parseSheetUrl(s.url)).filter(Boolean) }
-    catch { return [] }
+    let base = cachedShared?.sheets
+    if (!base) try { base = JSON.parse(sessionValue("magic-sheets", "[]")).map((s) => parseSheetUrl(s.url)).filter(Boolean) }
+    catch { base = [] }
+    return overlayPendingSheets(base, initialPendingWrites)
   })
   const [inputUrl, setInputUrl]     = useState("")
   const [isSyncing, setIsSyncing]   = useState(false)
@@ -90,18 +113,21 @@ export default function App() {
   const [filterMember, setFilterMember] = useState(() => localStorage.getItem(tableFilterKey) || null)
   const [showTeamManager, setShowTeamManager] = useState(false)
   const [showAdminSettings, setShowAdminSettings] = useState(false)
-  const [teamMembers, setTeamMembers] = useState(() => Array.isArray(cachedShared?.teamMembers) ? cachedShared.teamMembers : loadTeamMembers())
-  const [sharedError, setSharedError] = useState(null)
-  const [saveStatus, setSaveStatus] = useState({})
-  const [brands, setBrands] = useState(() => cachedShared?.brands || {})
-  const [workflow, setWorkflow] = useState(() => cachedShared?.workflow || {})
+  const [teamMembers, setTeamMembers] = useState(() => {
+    const pending = initialPendingWrites.find((item) => item.resource === "teamMembers")?.value
+    return Array.isArray(pending) ? pending : Array.isArray(cachedShared?.teamMembers) ? cachedShared.teamMembers : loadTeamMembers()
+  })
+  const [sharedError, setSharedError] = useState(() => initialPendingWrites.length ? "มีข้อมูลที่ยังบันทึกไม่สำเร็จ กด Retry เพื่อส่งเข้าระบบกลาง" : null)
+  const [saveStatus, setSaveStatus] = useState(() => Object.fromEntries(initialPendingWrites.map(({ resource, key }) => [`${resource}:${key}`, "failed"])))
+  const [brands, setBrands] = useState(() => overlayPendingRecords(cachedShared?.brands, initialPendingWrites, "brands"))
+  const [workflow, setWorkflow] = useState(() => overlayPendingRecords(cachedShared?.workflow, initialPendingWrites, "workflow"))
   const [dailyMetrics, setDailyMetrics] = useState([])
   const [taskEvents, setTaskEvents] = useState([])
   const [syncStatus, setSyncStatus] = useState(null)
   const [selectedTaskKey, setSelectedTaskKey] = useState(null)
   const syncingRef = useRef(false)
-  const dirtyRef = useRef(new Set())
-  const pendingWritesRef = useRef(new Map())
+  const dirtyRef = useRef(new Set(initialPendingWrites.map(({ resource, key }) => `${resource}:${key}`)))
+  const pendingWritesRef = useRef(new Map(initialPendingWrites.map((item) => [`${item.resource}:${item.key}`, item])))
   const writeVersionsRef = useRef(new Map())
   const writeChainsRef = useRef(new Map())
 
@@ -111,36 +137,41 @@ export default function App() {
   }, [])
 
   const [remarks, setRemarks] = useState(() => {
-    if (cachedShared?.remarks) return cachedShared.remarks
-    try { return JSON.parse(sessionValue("magic-remarks", "{}")) }
-    catch { return {} }
+    let base = cachedShared?.remarks
+    if (!base) try { base = JSON.parse(sessionValue("magic-remarks", "{}")) }
+    catch { base = {} }
+    return overlayPendingRecords(base, initialPendingWrites, "remarks")
   })
   const [priorities, setPriorities] = useState(() => {
-    if (cachedShared?.priorities) return cachedShared.priorities
-    try { return JSON.parse(sessionValue("magic-priorities", "{}")) }
-    catch { return {} }
+    let base = cachedShared?.priorities
+    if (!base) try { base = JSON.parse(sessionValue("magic-priorities", "{}")) }
+    catch { base = {} }
+    return overlayPendingRecords(base, initialPendingWrites, "priorities")
   })
   const [assignments, setAssignments] = useState(() => {
-    if (cachedShared?.assignments) return cachedShared.assignments
-    try { return JSON.parse(sessionValue("magic-assignments", "{}")) }
-    catch { return {} }
+    let base = cachedShared?.assignments
+    if (!base) try { base = JSON.parse(sessionValue("magic-assignments", "{}")) }
+    catch { base = {} }
+    return overlayPendingRecords(base, initialPendingWrites, "assignments")
   })
 
-  const persistShared = useCallback(async (resource, key, value) => {
+  const persistShared = useCallback(async (resource, key, value, mutation = value) => {
     const dirtyKey = `${resource}:${key}`
     const version = (writeVersionsRef.current.get(dirtyKey) || 0) + 1
     writeVersionsRef.current.set(dirtyKey, version)
     dirtyRef.current.add(dirtyKey)
-    pendingWritesRef.current.set(dirtyKey, { resource, key, value })
+    pendingWritesRef.current.set(dirtyKey, { resource, key, value, mutation })
+    cachePendingWrites([...pendingWritesRef.current.values()])
     setSaveStatus((prev) => ({ ...prev, [dirtyKey]: "saving" }))
     const previous = writeChainsRef.current.get(dirtyKey) || Promise.resolve()
-    const request = previous.catch(() => {}).then(() => patchSystemState(resource, key, value))
+    const request = previous.catch(() => {}).then(() => patchSystemState(resource, key, mutation))
     writeChainsRef.current.set(dirtyKey, request)
     try {
       const result = await request
       if (writeVersionsRef.current.get(dirtyKey) === version) {
         dirtyRef.current.delete(dirtyKey)
         pendingWritesRef.current.delete(dirtyKey)
+        cachePendingWrites([...pendingWritesRef.current.values()])
         setSaveStatus((prev) => ({ ...prev, [dirtyKey]: "saved" }))
         if (result?.warning) setSharedError(`บันทึกสำเร็จ แต่ ${result.warning}`)
         else if (pendingWritesRef.current.size === 0) setSharedError(null)
@@ -159,7 +190,7 @@ export default function App() {
 
   const retryPendingWrites = useCallback(() => {
     const pending = [...pendingWritesRef.current.values()]
-    return Promise.all(pending.map(({ resource, key, value }) => persistShared(resource, key, value)))
+    return Promise.all(pending.map(({ resource, key, value, mutation }) => persistShared(resource, key, value, mutation)))
   }, [persistShared])
 
   const refreshShared = useCallback(async () => {
@@ -205,13 +236,21 @@ export default function App() {
 
   useEffect(() => {
     if (!isSupabaseConfigured) return undefined
+    let refreshTimer
+    const scheduleRefresh = () => {
+      clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(refreshShared, 150)
+    }
     const channel = supabase
       .channel("timeline-shared-state")
-      .on("postgres_changes", { event: "*", schema: "public", table: "task_workflow" }, refreshShared)
-      .on("postgres_changes", { event: "*", schema: "public", table: "assignments" }, refreshShared)
-      .on("postgres_changes", { event: "*", schema: "public", table: "brands" }, refreshShared)
+      .on("postgres_changes", { event: "*", schema: "public", table: "sheets" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "team_members" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "task_workflow" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "assignments" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "brands" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "sync_runs" }, scheduleRefresh)
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    return () => { clearTimeout(refreshTimer); supabase.removeChannel(channel) }
   }, [refreshShared])
 
   useEffect(() => {
@@ -262,10 +301,14 @@ export default function App() {
     saveTeamMembers(newMembers)
     refreshTeamMembers()
     setTeamMembers(newMembers)
-    persistShared("teamMembers", "all", newMembers)
+    return persistShared("teamMembers", "all", newMembers)
   }
 
   const updateRecord = useCallback((resource, setter, key, value) => {
+    if (!isSupabaseConfigured) {
+      setSharedError("โหมด Localhost นี้เป็นแบบอ่านอย่างเดียวจนกว่าจะเชื่อม Supabase")
+      return Promise.resolve(false)
+    }
     setter((prev) => {
       const next = { ...prev }
       if (value !== null && value !== "" && (typeof value !== "object" || Object.keys(value).length > 0)) next[key] = value
@@ -278,7 +321,14 @@ export default function App() {
   const updateRemark = useCallback((key, value) => updateRecord("remarks", setRemarks, key, value), [updateRecord])
   const updatePriority = useCallback((key, value) => updateRecord("priorities", setPriorities, key, value), [updateRecord])
   const updateWorkflow = useCallback((key, value) => updateRecord("workflow", setWorkflow, key, value), [updateRecord])
-  const updateAssignment = useCallback((key, value) => updateRecord("assignments", setAssignments, key, value), [updateRecord])
+  const updateAssignment = useCallback((key, value, mutation) => {
+    if (!isSupabaseConfigured) {
+      setSharedError("โหมด Localhost นี้เป็นแบบอ่านอย่างเดียวจนกว่าจะเชื่อม Supabase")
+      return Promise.resolve(false)
+    }
+    setAssignments((current) => ({ ...current, [key]: value }))
+    return persistShared("assignments", key, value, mutation)
+  }, [persistShared])
   const updateBrand = useCallback((key, value) => updateRecord("brands", setBrands, key, value), [updateRecord])
   const renameBrand = useCallback(async (oldName, newName, tabs) => {
     try {
@@ -324,6 +374,10 @@ export default function App() {
 
   // Optimistic update with rollback when Apps Script rejects the write.
   const toggleTask = async (task, newDone) => {
+    if (!isSupabaseConfigured) {
+      setSyncError("โหมด Localhost นี้เป็นแบบอ่านอย่างเดียวจนกว่าจะเชื่อม Supabase")
+      return false
+    }
     const newActualSubmit = newDone ? bangkokDate() : null
     applyTaskCompletion(task, newDone, newActualSubmit)
     let saved = false
@@ -406,7 +460,7 @@ export default function App() {
     onOpenTask: openTask,
     workflow,
     onUpdateWorkflow: updateWorkflow,
-    canManageAssignments: true,
+    canManageAssignments: isSupabaseConfigured,
   }
 
   const addSheet = async () => {
@@ -452,11 +506,7 @@ export default function App() {
         }
         await refreshShared()
       } else {
-        const { tasks, issues } = await fetchAllSheetsData(sheets)
-        if (!tasks.length && issues.some((issue) => issue.type === "missing_task_id")) throw new Error("Sheets need Task IDs. Run the full Vercel/Supabase sync first.")
-        const categorized = categorizeTasks(tasks)
-        setLiveTasks(categorized)
-        setLastSynced(new Date())
+        throw new Error("ต้องเชื่อม Supabase ก่อนจึงจะ Sync ข้อมูลกลางได้")
       }
     } catch (err) {
       const msg = err.message || ""

@@ -1,4 +1,5 @@
 const SHARED_CACHE_KEY = "magic-shared-state"
+const PENDING_WRITES_KEY = "magic-pending-writes"
 
 export function parseSheetUrl(url) {
   if (typeof url !== "string") return null
@@ -62,4 +63,18 @@ export function loadCachedSharedState() {
 
 export function cacheSharedState(state) {
   sessionStorage.setItem(SHARED_CACHE_KEY, JSON.stringify(state))
+}
+
+export function loadPendingWrites() {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(PENDING_WRITES_KEY) || "[]")
+    return Array.isArray(value)
+      ? value.filter((item) => item && typeof item.resource === "string" && typeof item.key === "string")
+      : []
+  } catch { return [] }
+}
+
+export function cachePendingWrites(writes) {
+  if (writes.length) sessionStorage.setItem(PENDING_WRITES_KEY, JSON.stringify(writes))
+  else sessionStorage.removeItem(PENDING_WRITES_KEY)
 }

@@ -9,26 +9,30 @@ function throwIf(error) {
 async function fetchSupabaseState() {
   const since = new Date()
   since.setMonth(since.getMonth() - 12)
-  const [sheets, team, brands, assignments, tasks, workflow, metrics, latestRun, lastSuccess, events] = await Promise.all([
-    supabase.from("sheets").select("spreadsheet_id,url").eq("active", true).order("created_at"),
-    supabase.from("team_members").select("name,role,avatar").order("name"),
-    supabase.from("brands").select("tab_key,brand_name"),
-    supabase.from("assignments").select("brand_key,value"),
+  const [sheets, team, brands, assignments, tasks, workflow, latestRun, lastSuccess] = await Promise.all([
+    fetchAllRows((from, to) => supabase.from("sheets").select("spreadsheet_id,url").eq("active", true).order("created_at").range(from, to)),
+    fetchAllRows((from, to) => supabase.from("team_members").select("name,role,avatar").order("name").range(from, to)),
+    fetchAllRows((from, to) => supabase.from("brands").select("tab_key,brand_name").range(from, to)),
+    fetchAllRows((from, to) => supabase.from("assignments").select("brand_key,value").range(from, to)),
     fetchAllRows((from, to) => supabase.from("tasks_current").select("*").eq("active", true).range(from, to)),
     fetchAllRows((from, to) => supabase.from("task_workflow").select("task_key,status,note,priority,updated_at").range(from, to)),
-    fetchAllRows((from, to) => supabase.from("daily_metrics").select("*").gte("snapshot_date", since.toISOString().slice(0, 10)).order("snapshot_date").range(from, to)),
     supabase.from("sync_runs").select("id,status,started_at,finished_at,task_count,invalid_row_count,issues,error").order("started_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("sync_runs").select("*").eq("status", "success").order("finished_at", { ascending: false }).limit(1).maybeSingle(),
+  ])
+  ;[latestRun, lastSuccess].forEach(({ error }) => throwIf(error))
+  const [metricsResult, eventsResult] = await Promise.allSettled([
+    fetchAllRows((from, to) => supabase.from("daily_metrics").select("*").gte("snapshot_date", since.toISOString().slice(0, 10)).order("snapshot_date").range(from, to)),
     supabase.from("task_events").select("id,resource,record_key,event_type,before_value,after_value,actor_email,created_at").order("created_at", { ascending: false }).limit(100),
   ])
-  ;[sheets, team, brands, assignments, latestRun, lastSuccess, events].forEach(({ error }) => throwIf(error))
+  const metrics = metricsResult.status === "fulfilled" ? metricsResult.value : []
+  const events = eventsResult.status === "fulfilled" ? eventsResult.value.data || [] : []
 
   const workflowMap = Object.fromEntries(workflow.map((row) => [row.task_key, row]))
   return {
-    sheets: (sheets.data || []).map((row) => ({ spreadsheetId: row.spreadsheet_id, url: row.url })),
-    teamMembers: team.data || [],
-    brands: Object.fromEntries((brands.data || []).map((row) => [row.tab_key, row.brand_name])),
-    assignments: Object.fromEntries((assignments.data || []).map((row) => [row.brand_key, row.value || {}])),
+    sheets: sheets.map((row) => ({ spreadsheetId: row.spreadsheet_id, url: row.url })),
+    teamMembers: team,
+    brands: Object.fromEntries(brands.map((row) => [row.tab_key, row.brand_name])),
+    assignments: Object.fromEntries(assignments.map((row) => [row.brand_key, row.value || {}])),
     remarks: Object.fromEntries(Object.entries(workflowMap).filter(([, row]) => row.note).map(([key, row]) => [key, row.note])),
     priorities: Object.fromEntries(Object.entries(workflowMap).filter(([, row]) => row.priority).map(([key, row]) => [key, row.priority])),
     workflow: Object.fromEntries(Object.entries(workflowMap).map(([key, row]) => [key, row.status])),
@@ -46,7 +50,7 @@ async function fetchSupabaseState() {
       done: row.done,
     })),
     dailyMetrics: metrics,
-    taskEvents: events.data || [],
+    taskEvents: events,
     syncStatus: latestRun.data || null,
     updatedAt: lastSuccess.data?.finished_at || null,
   }
@@ -91,18 +95,14 @@ export async function patchSystemState(resource, key, value) {
     const response = await fetch("/api/assignment", {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-      body: JSON.stringify({ key, value: value || {} }),
+      body: JSON.stringify({ key, ...(value || {}) }),
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.error || `Assignment save failed (${response.status})`)
     return data
   } else if (resource === "teamMembers") {
-    const current = await supabase.from("team_members").select("name")
-    throwIf(current.error)
-    const keep = new Set((value || []).map((member) => member.name))
-    const removed = (current.data || []).filter((row) => !keep.has(row.name)).map((row) => row.name)
-    if (removed.length) throwIf((await supabase.from("team_members").delete().in("name", removed)).error)
-    if (value?.length) throwIf((await supabase.from("team_members").upsert(value, { onConflict: "name" })).error)
+    const { error } = await supabase.rpc("replace_team_members", { members: value || [] })
+    throwIf(error)
   } else {
     throw new Error(`Unsupported resource: ${resource}`)
   }

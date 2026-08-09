@@ -12,7 +12,7 @@ for (const header of ["content-security-policy", "x-content-type-options", "refe
 
 const assets = [...html.matchAll(/(?:src|href)=["']([^"']+\.js)["']/g)].map((match) => new URL(match[1], base))
 const tokenPattern = new RegExp("gh" + "[pousr]_[A-Za-z0-9_]{20,}")
-const legacyNames = ["GITHUB_TOKEN", "GIST_ID", "APPS_SCRIPT_URL"].map((name) => "VITE_" + name)
+const legacyNames = ["GITHUB_TOKEN", "GIST_ID", "APPS_SCRIPT_URL", "GOOGLE_SHEETS_API_KEY"].map((name) => "VITE_" + name)
 const forbiddenUrls = ["api.github.com/" + "gists", "script.google.com/" + "macros/s/"]
 for (const asset of assets) {
   if (asset.origin !== base.origin) continue

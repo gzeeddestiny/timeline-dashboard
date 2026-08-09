@@ -2,15 +2,17 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import { addTransitionMetrics, buildMetricRows, overdueTransitions, taskOwners } from "../api/_metrics.js"
+import { assignmentRpcArgs, validateAssignmentPatch } from "../api/assignment.js"
 import cronSync, { validCronSecret } from "../api/cron-sync.js"
 import { callAppsScript } from "../api/_appsScript.js"
 import { validateCompletion } from "../api/completion.js"
 import syncApi, { syncDecision } from "../api/sync.js"
-import { blockedRecipients, validateWorkflow } from "../api/workflow.js"
+import { blockedRecipients, validateWorkflow, workflowRpcArgs } from "../api/workflow.js"
 import { filterDashboardTasks } from "../src/lib/dashboardFilters.js"
 import { bangkokDate, daysFrom, parseSheetDate, validIsoDate } from "../src/lib/dates.js"
 import { fetchAllRows } from "../src/lib/supabasePages.js"
-import { taskSheetUrl } from "../src/lib/sharedState.js"
+import { fetchAllSheetsData } from "../src/lib/sheetsApi.js"
+import { cachePendingWrites, loadPendingWrites, taskSheetUrl } from "../src/lib/sharedState.js"
 import { responsibilityMentions } from "../src/lib/teamConfig.js"
 import { filterMyWorkTasks, myWorkMonths, partitionMyWorkTasks } from "../src/lib/workViews.js"
 
@@ -26,6 +28,31 @@ test("validates workflow patches", () => {
   assert.equal(validateWorkflow({ key: "s:1:task-a", status: "unknown" }), "Invalid workflow status")
   assert.equal(validateWorkflow({ key: "bad", note: "x" }), "Invalid task key")
   assert.equal(validateWorkflow({ key: "s:1:1" }), "No changes supplied")
+})
+
+test("workflow RPC patches only fields present in the request", () => {
+  assert.deepEqual(workflowRpcArgs({ key: "s:1:task-a", note: "new note" }, "actor"), {
+    p_task_key: "s:1:task-a",
+    p_status: null,
+    p_has_status: false,
+    p_note: "new note",
+    p_has_note: true,
+    p_priority: null,
+    p_has_priority: false,
+    p_actor: "actor",
+  })
+})
+
+test("assignment RPC updates one role without replacing the whole object", () => {
+  assert.equal(validateAssignmentPatch({ key: "nike", role: "pm", member: "Tony" }), null)
+  assert.equal(validateAssignmentPatch({ key: "nike", role: "unknown", member: "Tony" }), "Invalid assignment role")
+  assert.deepEqual(assignmentRpcArgs({ key: " nike ", role: "pm", member: null }, "actor"), {
+    p_brand_key: "nike",
+    p_role: "pm",
+    p_member: null,
+    p_clear: false,
+    p_actor: "actor",
+  })
 })
 
 test("validates completion targets before writing Google Sheets", () => {
@@ -102,6 +129,25 @@ test("propagates Apps Script transport and application failures", async () => {
   else process.env.APPS_SCRIPT_URL = previous.url
   if (previous.secret === undefined) delete process.env.APPS_SCRIPT_SHARED_SECRET
   else process.env.APPS_SCRIPT_SHARED_SECRET = previous.secret
+})
+
+test("aborts a sync source read instead of accepting a partial Google response", async () => {
+  const originalFetch = globalThis.fetch
+  let request = 0
+  globalThis.fetch = async () => {
+    request += 1
+    return request === 1
+      ? { ok: true, json: async () => ({ properties: { title: "AUG" }, sheets: [{ properties: { title: "Brand", sheetId: 1, hidden: false } }] }) }
+      : { ok: true, json: async () => ({ error: { message: "temporary failure" } }) }
+  }
+  try {
+    await assert.rejects(
+      fetchAllSheetsData([{ url: "https://docs.google.com/spreadsheets/d/sheet" }], "server-key"),
+      /batchGet failed/
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test("builds overall, month and person daily metrics without fake dates", () => {
@@ -189,6 +235,24 @@ test("builds a stable Google Sheet row link without changing the app URL", () =>
   assert.equal(taskSheetUrl(null, "bad"), null)
 })
 
+test("keeps failed shared writes in a session retry outbox", () => {
+  const values = new Map()
+  globalThis.sessionStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  }
+  try {
+    const pending = [{ resource: "remarks", key: "s:1:task-a", value: "draft", mutation: "draft" }]
+    cachePendingWrites(pending)
+    assert.deepEqual(loadPendingWrites(), pending)
+    cachePendingWrites([])
+    assert.deepEqual(loadPendingWrites(), [])
+  } finally {
+    delete globalThis.sessionStorage
+  }
+})
+
 test("RLS migration grants task edits to active users and settings only to admins", async () => {
   const sql = await readFile(new URL("../supabase/migrations/20260729000000_full_system.sql", import.meta.url), "utf8")
   assert.match(sql, /workflow_insert[\s\S]*private\.is_active_user\(\)/)
@@ -218,4 +282,27 @@ test("RLS migration grants task edits to active users and settings only to admin
   assert.match(cronSql, /'\*\/30 \* \* \* \*'/)
   assert.match(cronSql, /vault\.decrypted_secrets/)
   assert.doesNotMatch(cronSql, /X-Cron-Secret',\s*'[^']{32}/)
+})
+
+test("central state migration makes team changes atomic and realtime", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/20260809174859_central_state_stability.sql", import.meta.url), "utf8")
+  assert.match(sql, /function public\.replace_team_members\(members jsonb\)/)
+  assert.match(sql, /if not private\.is_admin\(\)/)
+  assert.match(sql, /on conflict \(name\) do update/)
+  assert.match(sql, /revoke insert, update, delete on table public\.team_members from authenticated/)
+  assert.match(sql, /grant execute on function public\.replace_team_members\(jsonb\) to authenticated/)
+  assert.match(sql, /function public\.patch_task_workflow\(/)
+  assert.match(sql, /status = case when p_has_status/)
+  assert.match(sql, /note = case when p_has_note/)
+  assert.match(sql, /priority = case when p_has_priority/)
+  assert.match(sql, /to service_role/)
+  assert.match(sql, /function public\.patch_assignment_role\(/)
+  assert.match(sql, /jsonb_set\(assignments\.value, array\[p_role\]/)
+  assert.match(sql, /revoke insert, update, delete on table public\.assignments from authenticated/)
+  assert.match(sql, /'public\.sheets', 'public\.team_members'/)
+  assert.match(sql, /create trigger audit_team_members/)
+  assert.match(sql, /create trigger audit_sheets/)
+  const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8")
+  assert.match(app, /patchSystemState\(resource, key, mutation\)/)
+  assert.match(app, /cachePendingWrites\(\[\.\.\.pendingWritesRef\.current\.values\(\)\]\)/)
 })
