@@ -37,14 +37,6 @@ select cron.schedule(
   $$
 );
 
--- Queue generation only; no email provider sends these rows yet.
--- 02:00 UTC = 09:00 Asia/Bangkok.
-select cron.schedule(
-  'timeline-dashboard-daily-digest',
-  '0 2 * * *',
-  $$select private.queue_daily_digest();$$
-);
-
 select cron.schedule(
   'timeline-retention',
   '30 19 * * *', -- 02:30 Asia/Bangkok

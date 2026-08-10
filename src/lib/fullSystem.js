@@ -7,26 +7,17 @@ function throwIf(error) {
 }
 
 async function fetchSupabaseState() {
-  const since = new Date()
-  since.setMonth(since.getMonth() - 12)
   const [sheets, team, brands, assignments, tasks, workflow, latestRun, lastSuccess] = await Promise.all([
-    fetchAllRows((from, to) => supabase.from("sheets").select("spreadsheet_id,url").eq("active", true).order("created_at").range(from, to)),
+    fetchAllRows((from, to) => supabase.from("sheets").select("spreadsheet_id,url").eq("active", true).order("created_at").order("spreadsheet_id").range(from, to)),
     fetchAllRows((from, to) => supabase.from("team_members").select("name,role,avatar").order("name").range(from, to)),
-    fetchAllRows((from, to) => supabase.from("brands").select("tab_key,brand_name").range(from, to)),
-    fetchAllRows((from, to) => supabase.from("assignments").select("brand_key,value").range(from, to)),
-    fetchAllRows((from, to) => supabase.from("tasks_current").select("*").eq("active", true).range(from, to)),
-    fetchAllRows((from, to) => supabase.from("task_workflow").select("task_key,status,note,priority,updated_at").range(from, to)),
+    fetchAllRows((from, to) => supabase.from("brands").select("tab_key,brand_name").order("tab_key").range(from, to)),
+    fetchAllRows((from, to) => supabase.from("assignments").select("brand_key,value").order("brand_key").range(from, to)),
+    fetchAllRows((from, to) => supabase.from("tasks_current").select("*").eq("active", true).order("task_key").range(from, to)),
+    fetchAllRows((from, to) => supabase.from("task_workflow").select("task_key,status,note,priority,note_version,updated_at").order("task_key").range(from, to)),
     supabase.from("sync_runs").select("id,status,started_at,finished_at,task_count,invalid_row_count,issues,error").order("started_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("sync_runs").select("*").eq("status", "success").order("finished_at", { ascending: false }).limit(1).maybeSingle(),
   ])
   ;[latestRun, lastSuccess].forEach(({ error }) => throwIf(error))
-  const [metricsResult, eventsResult] = await Promise.allSettled([
-    fetchAllRows((from, to) => supabase.from("daily_metrics").select("*").gte("snapshot_date", since.toISOString().slice(0, 10)).order("snapshot_date").range(from, to)),
-    supabase.from("task_events").select("id,resource,record_key,event_type,before_value,after_value,actor_email,created_at").order("created_at", { ascending: false }).limit(100),
-  ])
-  const metrics = metricsResult.status === "fulfilled" ? metricsResult.value : []
-  const events = eventsResult.status === "fulfilled" ? eventsResult.value.data || [] : []
-
   const workflowMap = Object.fromEntries(workflow.map((row) => [row.task_key, row]))
   return {
     sheets: sheets.map((row) => ({ spreadsheetId: row.spreadsheet_id, url: row.url })),
@@ -34,6 +25,7 @@ async function fetchSupabaseState() {
     brands: Object.fromEntries(brands.map((row) => [row.tab_key, row.brand_name])),
     assignments: Object.fromEntries(assignments.map((row) => [row.brand_key, row.value || {}])),
     remarks: Object.fromEntries(Object.entries(workflowMap).filter(([, row]) => row.note).map(([key, row]) => [key, row.note])),
+    noteVersions: Object.fromEntries(Object.entries(workflowMap).map(([key, row]) => [key, row.note_version || 0])),
     priorities: Object.fromEntries(Object.entries(workflowMap).filter(([, row]) => row.priority).map(([key, row]) => [key, row.priority])),
     workflow: Object.fromEntries(Object.entries(workflowMap).map(([key, row]) => [key, row.status])),
     tasks: tasks.map((row) => ({
@@ -49,8 +41,6 @@ async function fetchSupabaseState() {
       actualSubmit: row.actual_submit || "",
       done: row.done,
     })),
-    dailyMetrics: metrics,
-    taskEvents: events,
     syncStatus: latestRun.data || null,
     updatedAt: lastSuccess.data?.finished_at || null,
   }
@@ -61,6 +51,37 @@ export async function fetchSystemState() {
   return fetchSupabaseState()
 }
 
+export async function fetchSystemAnalytics() {
+  if (!isSupabaseConfigured) throw new Error("Supabase is not configured")
+  const since = new Date()
+  since.setMonth(since.getMonth() - 12)
+  const [dailyMetrics, events] = await Promise.all([
+    fetchAllRows((from, to) => supabase.from("daily_metrics").select("*").gte("snapshot_date", since.toISOString().slice(0, 10)).order("snapshot_date").order("dimension").order("dimension_key").range(from, to)),
+    supabase.from("task_events").select("id,resource,record_key,event_type,before_value,after_value,actor_email,created_at").order("created_at", { ascending: false }).order("id", { ascending: false }).limit(100),
+  ])
+  throwIf(events.error)
+  return { dailyMetrics, taskEvents: events.data || [] }
+}
+
+async function taskTabsRequest(body) {
+  const response = await fetch("/api/task-tabs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify(body),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(data.error || `Task tab request failed (${response.status})`)
+  return data
+}
+
+export function inspectTaskTabs(spreadsheetId) {
+  return taskTabsRequest({ action: "inspect", spreadsheetId })
+}
+
+export function provisionTaskTabs(spreadsheetId, sheetGids) {
+  return taskTabsRequest({ action: "provision", spreadsheetId, sheetGids })
+}
+
 async function workflowPatch(key, patch) {
   const response = await fetch("/api/workflow", {
     method: "PATCH",
@@ -68,14 +89,23 @@ async function workflowPatch(key, patch) {
     body: JSON.stringify({ key, ...patch }),
   })
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.error || `Workflow save failed (${response.status})`)
+  if (!response.ok) {
+    const error = new Error(data.error || `Workflow save failed (${response.status})`)
+    error.status = response.status
+    error.data = data
+    throw error
+  }
   return data
 }
 
-export async function patchSystemState(resource, key, value) {
+export async function patchSystemState(resource, key, value, options = {}) {
   if (!isSupabaseConfigured) throw new Error("Supabase is not configured")
 
-  if (resource === "remarks") return workflowPatch(key, { note: value || "" })
+  if (resource === "remarks") return workflowPatch(key, {
+    note: value || "",
+    expectedNoteVersion: options.expectedNoteVersion ?? 0,
+    forceNote: options.forceNote === true,
+  })
   if (resource === "priorities") return workflowPatch(key, { priority: value || null })
   if (resource === "workflow") return workflowPatch(key, { status: value || "not_started" })
 
@@ -108,6 +138,27 @@ export async function patchSystemState(resource, key, value) {
   }
 
   return { resource, key, value }
+}
+
+export async function uploadTeamAvatar(dataUrl) {
+  const response = await fetch(dataUrl)
+  const blob = await response.blob()
+  if (!["image/jpeg", "image/png", "image/webp"].includes(blob.type) || blob.size > 2_097_152) {
+    throw new Error("Avatar must be a JPEG, PNG or WebP under 2 MB")
+  }
+  const extension = blob.type.split("/")[1].replace("jpeg", "jpg")
+  const path = `${crypto.randomUUID()}.${extension}`
+  const uploaded = await supabase.storage.from("team-avatars").upload(path, blob, { contentType: blob.type, upsert: false })
+  throwIf(uploaded.error)
+  return supabase.storage.from("team-avatars").getPublicUrl(path).data.publicUrl
+}
+
+export async function deleteTeamAvatar(url) {
+  const marker = "/storage/v1/object/public/team-avatars/"
+  const path = String(url || "").split(marker)[1]
+  if (!path) return
+  const { error } = await supabase.storage.from("team-avatars").remove([decodeURIComponent(path)])
+  throwIf(error)
 }
 
 export async function triggerSystemSync(force = false) {

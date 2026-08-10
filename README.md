@@ -19,12 +19,12 @@ Google OAuth redirect สำหรับ local ปกติคือ `http://127
 - Vercel Functions ใช้ `SUPABASE_URL` และ `SUPABASE_SECRET_KEY`; ห้ามขึ้นต้น secret ด้วย `VITE_`
 - เพิ่ม `sheets`, `team_members`, `task_workflow`, `assignments`, `brands`, `sync_runs` และ `notifications` เข้า Supabase Realtime publication เพื่อรับการเปลี่ยนแปลงทันที; polling 30 วินาทียังคงเป็น fallback
 - RLS บังคับ allowlist และ role ที่ database: active user อ่าน/แก้ workflow และ assignment ได้, เฉพาะ Admin แก้ access, Sheets, ทีม และ brand mapping
-- ชื่อ/role/รูปโปรไฟล์ทีมเก็บใน `team_members`; การแก้ทั้งชุดใช้ `replace_team_members` transaction เดียวและจำกัดรูปที่ crop แล้วไม่เกิน 100 KB
-- เปิด Supabase Cron และ `pg_net`, สร้าง Vault secrets ชื่อ `timeline_dashboard_url` กับ `timeline_cron_secret` แล้วรัน `supabase/cron.sql`; ระบบจะ sync ทุก 30 นาทีและ queue digest เวลา 09:00 Asia/Bangkok โดยยังไม่มีการส่งอีเมลจริง
+- ชื่อ/role เก็บใน `team_members`; รูปโปรไฟล์เก็บใน public bucket `team-avatars` ขนาดไม่เกิน 2 MB และฐานข้อมูลเก็บเฉพาะ URL
+- เปิด Supabase Cron และ `pg_net`, สร้าง Vault secrets ชื่อ `timeline_dashboard_url` กับ `timeline_cron_secret` แล้วรัน `supabase/cron.sql`; ระบบจะ sync ทุก 30 นาที ไม่มี email queue ในรอบนี้
 
 ## Sync and freshness
 
-`POST /api/sync` ดึง Google Sheets ด้วย user session เมื่อเปิดหน้าและ snapshot เก่ากว่า 5 นาที ส่วน Manual Sync จำกัดอย่างน้อย 60 วินาที `POST /api/cron-sync` ใช้ `X-Cron-Secret` จาก Supabase Vault เพื่อ sync ทุก 30 นาที ทั้งสอง endpoint ใช้ lock และ sync core เดียวกัน ถ้าข้อมูลเกิน 24 ชั่วโมง UI จะแสดง stale warning
+`POST /api/sync` ดึงเฉพาะ tab ที่ header A:E ตรง schema งาน เมื่อพบ Task ID ว่าง/ซ้ำ/ไม่ปลอดภัยจะให้ Apps Script ซ่อมแล้วอ่านซ้ำหนึ่งครั้ง ก่อน apply snapshot และ metrics ใน database transaction เดียว Summary/Report tab ถูกข้ามและแสดงใน Data Health ส่วน Manual Sync จำกัดอย่างน้อย 60 วินาที `POST /api/cron-sync` ใช้ `X-Cron-Secret` จาก Supabase Vault เพื่อ sync ทุก 30 นาที ทั้งสอง endpoint ใช้ lock และ sync core เดียวกัน ถ้าข้อมูลเกิน 24 ชั่วโมง UI จะแสดง stale warning
 
 ตั้ง scheduled sync หลัง Production URL พร้อม:
 
@@ -35,7 +35,7 @@ select vault.create_secret('<same value as CRON_SYNC_SECRET>', 'timeline_cron_se
 
 จากนั้นรัน `supabase/cron.sql` และตรวจ `cron.job_run_details` คู่กับ `public.sync_runs` การ sync จริงต้องจบภายใน 45 วินาที; ถ้าเกินให้กลับ Maintenance และไม่เพิ่ม timeout เพื่อกลบปัญหา
 
-การเปลี่ยน Done เรียก `/api/completion` เพื่อเขียน Apps Script ก่อนอัปเดต snapshot; ถ้าล้มเหลว frontend rollback ค่าทันที Workflow/note/priority และ assignment ใช้ database RPC แก้เฉพาะ field/role ที่ส่งมา จึงไม่เขียนทับกันเมื่อ save พร้อมกัน รายการที่ save ไม่สำเร็จเก็บเป็น retry outbox เฉพาะ browser session ทุก shared mutation เก็บ audit event ผ่าน database trigger หน้า Management แสดง Recent Activity พร้อมผู้แก้และเวลา (ประวัติเก่าก่อนเพิ่ม `actor_email` จะแสดงเป็น System)
+การเปลี่ยน Done เรียก `/api/completion` เพื่อเขียน Apps Script ก่อนอัปเดต snapshot+audit ใน transaction; ถ้าล้มเหลว frontend rollback ค่าทันที Active user ทุกคนแก้ workflow/note/priority/Done/assignment ได้ ส่วน Admin เท่านั้นที่แก้ users, Sheets, ทีม และ brand mapping Note ส่ง `expectedNoteVersion` และตอบ `409` พร้อมค่าล่าสุดเมื่อชนกัน รายการที่ save ไม่สำเร็จเก็บเป็น retry outbox เฉพาะ browser session
 
 ถ้า sync process หยุดกลางทาง ระบบจะถือ lock ที่เก่ากว่า 10 นาทีเป็น failed แล้วเริ่มรอบใหม่ได้อัตโนมัติ เพื่อไม่ให้ Manual Sync ค้างถาวร
 
@@ -47,7 +47,7 @@ Gist ไม่มี runtime/fallback ใน production แล้ว ใช้ t
 2. เพิ่ม Sheets/ทีม/แบรนด์/assignment ด้วย `npm run migrate:gist`
 3. Deploy Apps Script แล้วทำ initial sync เพื่อ backfill Task ID และสร้าง `tasks_current`
 4. รัน `npm run migrate:gist` ซ้ำเพื่อย้าย note/priority ผ่าน task alias; script idempotent และข้อมูล Supabase ที่มีอยู่แล้วจะไม่ถูกเขียนทับ
-5. ตรวจจำนวนข้อมูลครบ ลบ variables และ revoke migration token ทันที
+5. ตรวจทั้งจำนวนและ SHA-256 checksum ราย resource ให้ตรง ลบ variables และ revoke migration tokenทันที
 
 `GITHUB_TOKEN` และ `GIST_ID` เป็น server-only variables ห้ามใช้ชื่อที่ขึ้นต้นด้วย `VITE_` เพราะ Vite จะฝังค่านั้นลง frontend bundle
 

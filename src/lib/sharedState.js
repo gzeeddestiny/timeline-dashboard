@@ -45,7 +45,14 @@ export function taskSheetUrl(task, key = task ? taskKey(task) : "") {
 
 export function mergeRemote(local, remote, dirtyKeys, resource) {
   const next = { ...(remote || {}) }
-  for (const [key, value] of Object.entries(local || {})) {
+  const localRecords = local || {}
+  dirtyKeys.forEach((dirtyKey) => {
+    const prefix = `${resource}:`
+    if (!dirtyKey.startsWith(prefix)) return
+    const key = dirtyKey.slice(prefix.length)
+    if (!(key in localRecords)) delete next[key]
+  })
+  for (const [key, value] of Object.entries(localRecords)) {
     if (dirtyKeys.has(`${resource}:${key}`)) next[key] = value
   }
   return next
@@ -62,7 +69,8 @@ export function loadCachedSharedState() {
 }
 
 export function cacheSharedState(state) {
-  sessionStorage.setItem(SHARED_CACHE_KEY, JSON.stringify(state))
+  try { sessionStorage.setItem(SHARED_CACHE_KEY, JSON.stringify(state)) }
+  catch { /* cache is optional */ }
 }
 
 export function loadPendingWrites() {
@@ -75,6 +83,8 @@ export function loadPendingWrites() {
 }
 
 export function cachePendingWrites(writes) {
-  if (writes.length) sessionStorage.setItem(PENDING_WRITES_KEY, JSON.stringify(writes))
-  else sessionStorage.removeItem(PENDING_WRITES_KEY)
+  try {
+    if (writes.length) sessionStorage.setItem(PENDING_WRITES_KEY, JSON.stringify(writes))
+    else sessionStorage.removeItem(PENDING_WRITES_KEY)
+  } catch { /* pending data remains in memory when storage is full */ }
 }

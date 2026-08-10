@@ -1,8 +1,8 @@
 import { fetchAllSheetsData } from "../src/lib/sheetsApi.js"
 import { taskKey } from "../src/lib/sharedState.js"
 import { fetchAllRows } from "../src/lib/supabasePages.js"
-import { addTransitionMetrics, bangkokDate, buildMetricRows } from "./_metrics.js"
 import { callAppsScript } from "./_appsScript.js"
+import { addTransitionMetrics, bangkokDate, buildMetricRows } from "./_metrics.js"
 
 const AUTO_COOLDOWN_MS = 5 * 60 * 1000
 const MANUAL_COOLDOWN_MS = 60 * 1000
@@ -39,9 +39,20 @@ function taskRow(task, syncedAt) {
   }
 }
 
+export function taskIdRepairTargets(issues) {
+  const targets = new Map()
+  for (const issue of issues.filter((item) => ["missing_task_id", "duplicate_task_id", "invalid_task_id"].includes(item.type))) {
+    if (!targets.has(issue.spreadsheetId)) targets.set(issue.spreadsheetId, new Set())
+    targets.get(issue.spreadsheetId).add(Number(issue.sheetGid))
+  }
+  return [...targets].map(([spreadsheetId, gids]) => ({ spreadsheetId, sheetGids: [...gids] }))
+}
+
 export async function runSync({ admin, force = false, triggerType = force ? "manual" : "client", triggeredBy = null }) {
   const startedAt = Date.now()
   let runId
+  let syncIssues = []
+  let repairedTaskIds = 0
   try {
     const { data: latest, error: latestError } = await admin
       .from("sync_runs")
@@ -78,33 +89,39 @@ export async function runSync({ admin, force = false, triggerType = force ? "man
     if (runError) throw runError
     runId = run.id
 
-    const sheetRows = await fetchAllRows((from, to) => admin.from("sheets").select("spreadsheet_id,url").eq("active", true).range(from, to))
+    const sheetRows = await fetchAllRows((from, to) => admin.from("sheets").select("spreadsheet_id,url").eq("active", true).order("spreadsheet_id").range(from, to))
     const sheets = sheetRows.map((row) => ({ spreadsheetId: row.spreadsheet_id, url: row.url }))
     const googleKey = process.env.GOOGLE_SHEETS_API_KEY
     if (!googleKey) throw new Error("Google Sheets server API key is not configured")
-    const previousTasks = await fetchAllRows((from, to) => admin.from("tasks_current").select("*").eq("active", true).range(from, to))
-    if (sheets.length) await callAppsScript({ action: "ensure_task_ids", spreadsheetIds: sheets.map((sheet) => sheet.spreadsheetId) })
-    const { tasks, issues } = sheets.length ? await fetchAllSheetsData(sheets, googleKey) : { tasks: [], issues: [] }
+    const previousTasks = await fetchAllRows((from, to) => admin.from("tasks_current").select("*").eq("active", true).order("task_key").range(from, to))
+    let result = sheets.length ? await fetchAllSheetsData(sheets, googleKey) : { tasks: [], issues: [] }
+    syncIssues = result.issues
+    const repairTargets = taskIdRepairTargets(result.issues)
+    if (repairTargets.length) {
+      const repair = await callAppsScript({ action: "ensure_task_ids", targets: repairTargets })
+      repairedTaskIds = Number(repair.updated) || 0
+      result = await fetchAllSheetsData(sheets, googleKey)
+      syncIssues = result.issues
+    }
+    const { tasks, issues } = result
+    syncIssues = issues
+    const identityIssues = issues.filter((issue) => ["missing_task_id", "duplicate_task_id", "invalid_task_id", "invalid_task_id_header"].includes(issue.type))
+    if (identityIssues.length) {
+      throw new Error(`Sync stopped: ${identityIssues.length} Task ID issue(s) still need attention.`)
+    }
     const syncedAt = new Date().toISOString()
     const rows = tasks.map((task) => taskRow(task, syncedAt))
     for (let index = 0; index < rows.length; index += 500) {
-      const { error } = await admin.from("tasks_current").upsert(rows.slice(index, index + 500), { onConflict: "task_key" })
-      if (error) throw error
-    }
-    if (sheets.length) {
-      const { error } = await admin.from("tasks_current")
-        .update({ active: false, removed_at: syncedAt })
-        .in("spreadsheet_id", sheets.map((sheet) => sheet.spreadsheetId))
-        .eq("active", true)
-        .lt("source_synced_at", syncedAt)
+      const staged = rows.slice(index, index + 500).map((row) => ({ run_id: runId, ...row }))
+      const { error } = await admin.from("sync_stage_tasks").insert(staged)
       if (error) throw error
     }
 
     const [workflowRows, teamRows, brandRows, assignmentRows] = await Promise.all([
-      fetchAllRows((from, to) => admin.from("task_workflow").select("task_key,status").range(from, to)),
-      fetchAllRows((from, to) => admin.from("team_members").select("name,role,avatar").range(from, to)),
-      fetchAllRows((from, to) => admin.from("brands").select("tab_key,brand_name").range(from, to)),
-      fetchAllRows((from, to) => admin.from("assignments").select("brand_key,value").range(from, to)),
+      fetchAllRows((from, to) => admin.from("task_workflow").select("task_key,status").order("task_key").range(from, to)),
+      fetchAllRows((from, to) => admin.from("team_members").select("name,role,avatar").order("name").range(from, to)),
+      fetchAllRows((from, to) => admin.from("brands").select("tab_key,brand_name").order("tab_key").range(from, to)),
+      fetchAllRows((from, to) => admin.from("assignments").select("brand_key,value").order("brand_key").range(from, to)),
     ])
     const workflow = Object.fromEntries(workflowRows.map((row) => [row.task_key, row.status]))
     const brands = Object.fromEntries(brandRows.map((row) => [row.tab_key, row.brand_name]))
@@ -127,31 +144,35 @@ export async function runSync({ admin, force = false, triggerType = force ? "man
         overdueResolved: (existing.overdueResolved || 0) + (row.metrics.overdueResolved || 0),
       } }
     })
-    if (metricRows.length) {
-      const { error } = await admin.from("daily_metrics").upsert(metricRows, { onConflict: "snapshot_date,dimension,dimension_key" })
-      if (error) throw error
-    }
-
     const finishedAt = new Date().toISOString()
-    const { error: finishError } = await admin.from("sync_runs").update({
-      status: "success",
-      task_count: tasks.length,
-      invalid_row_count: issues.length,
-      issues: issues.slice(0, 100),
-      finished_at: finishedAt,
-    }).eq("id", runId)
-    if (finishError) throw finishError
+    const applied = await admin.rpc("apply_sync_snapshot", {
+      p_run_id: runId,
+      p_synced_at: syncedAt,
+      p_sheet_ids: sheets.map((sheet) => sheet.spreadsheetId),
+      p_metric_rows: metricRows,
+      p_issues: issues.slice(0, 100),
+      p_finished_at: finishedAt,
+    })
+    if (applied.error) throw applied.error
     return { status: 200, body: {
       status: "success",
       runId,
       taskCount: tasks.length,
-      invalidRowCount: issues.length,
+      invalidRowCount: issues.filter((issue) => issue.type !== "skipped_tab").length,
       issues: issues.slice(0, 100),
+      skippedTabs: issues.filter((issue) => issue.type === "skipped_tab").length,
+      repairedTaskIds,
       dataAsOf: finishedAt,
       durationMs: Date.now() - startedAt,
     } }
   } catch (error) {
-    if (runId) await admin.from("sync_runs").update({ status: "failed", error: error.message, finished_at: new Date().toISOString() }).eq("id", runId)
+    if (runId) await admin.from("sync_runs").update({
+      status: "failed",
+      error: error.message,
+      invalid_row_count: syncIssues.filter((issue) => issue.type !== "skipped_tab").length,
+      issues: syncIssues.slice(0, 100),
+      finished_at: new Date().toISOString(),
+    }).eq("id", runId)
     throw error
   }
 }

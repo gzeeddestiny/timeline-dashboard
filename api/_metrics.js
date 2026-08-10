@@ -1,15 +1,14 @@
 import { extractBrandName } from "../src/lib/sheetsApi.js"
 import { normalizeBrandKey } from "../src/lib/sharedState.js"
 import { bangkokDate } from "../src/lib/dates.js"
-import { responsibilityMentions } from "../src/lib/teamConfig.js"
+import { taskOwnerNames } from "../src/lib/teamConfig.js"
 
 export { bangkokDate }
 
 export function taskOwners(task, teamMembers, brands, assignments) {
   const brand = brands[`${task.spreadsheetId}:${task.sheetGid}`] || extractBrandName(task.clientName)
-  const assigned = Object.values(assignments[normalizeBrandKey(brand)] || assignments[task.clientName] || {})
-  const mentioned = teamMembers.filter((member) => responsibilityMentions(task.responsibility, member.name)).map((member) => member.name)
-  return [...new Set([...assigned, ...mentioned])]
+  const assignment = assignments[normalizeBrandKey(brand)] || assignments[task.clientName] || {}
+  return taskOwnerNames(task, teamMembers, assignment)
 }
 
 export function metricSummary(tasks, workflow, today = bangkokDate()) {
@@ -32,18 +31,21 @@ export function metricSummary(tasks, workflow, today = bangkokDate()) {
   }
 }
 
-export function overdueTransitions(previousTasks, currentTasks, today = bangkokDate()) {
+export function overdueTransitions(previousTasks, currentTasks, today = bangkokDate(), previousDate = today) {
   const keyOf = (task) => task.taskKey || task.task_key
-  const overdue = (task) => {
+  const overdue = (task, onDate) => {
     const due = task.dueDate || task.due_date
-    return !task.done && Boolean(due) && due < today
+    return !task.done && Boolean(due) && due < onDate
   }
   const previous = new Map(previousTasks.map((task) => [keyOf(task), task]))
   const current = new Map(currentTasks.map((task) => [keyOf(task), task]))
   let created = 0
   let resolved = 0
-  current.forEach((task, key) => { if (overdue(task) && !overdue(previous.get(key) || {})) created++ })
-  previous.forEach((task, key) => { if (overdue(task) && !overdue(current.get(key) || {})) resolved++ })
+  current.forEach((task, key) => { if (overdue(task, today) && !overdue(previous.get(key) || {}, previousDate)) created++ })
+  previous.forEach((task, key) => {
+    const currentTask = current.get(key)
+    if (currentTask && overdue(task, previousDate) && !overdue(currentTask, today)) resolved++
+  })
   return { overdueCreated: created, overdueResolved: resolved }
 }
 
@@ -65,6 +67,8 @@ export function addTransitionMetrics(rows, previousTasks, currentTasks, teamMemb
   const owners = (tasks) => new Map(tasks.map((task) => [task.taskKey, taskOwners(task, teamMembers, brands, assignments)]))
   const previousOwners = owners(previous)
   const currentOwners = owners(current)
+  const previousSync = previousTasks.map((task) => task.source_synced_at).filter(Boolean).sort().at(-1)
+  const previousDate = previousSync ? bangkokDate(new Date(previousSync)) : today
   const select = (row, tasks, ownerMap) => {
     if (row.dimension === "overall") return tasks
     if (row.dimension === "month") return tasks.filter((task) => task.month === row.dimension_key)
@@ -79,6 +83,7 @@ export function addTransitionMetrics(rows, previousTasks, currentTasks, teamMemb
       select(row, previous, previousOwners),
       select(row, current, currentOwners),
       today,
+      previousDate,
     )
     return { ...row, metrics: { ...row.metrics, ...transitions } }
   })

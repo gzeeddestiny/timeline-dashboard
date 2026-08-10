@@ -8,7 +8,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
  * @param {function} onCrop — (croppedBase64) => void
  * @param {function} onCancel — () => void
  */
-export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
+export default function ImageCropper({ imageSrc, onCrop, onCancel, saving = false }) {
   const canvasRef = useRef(null)
   const imgRef = useRef(null)
   const stateRef = useRef({ x: 0, y: 0, scale: 1, dragging: false, lastX: 0, lastY: 0 })
@@ -18,6 +18,17 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
 
   const [zoom, setZoom] = useState(0.26)
   const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState("")
+
+  const clampPosition = useCallback(() => {
+    const img = imgRef.current
+    if (!img) return
+    const state = stateRef.current
+    const width = img.width * state.scale
+    const height = img.height * state.scale
+    state.x = Math.min(0, Math.max(CANVAS_SIZE - width, state.x))
+    state.y = Math.min(0, Math.max(CANVAS_SIZE - height, state.y))
+  }, [])
 
   // Load image
   useEffect(() => {
@@ -30,9 +41,10 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
       stateRef.current.scale = fitScale
       stateRef.current.x = (CANVAS_SIZE - img.width * fitScale) / 2
       stateRef.current.y = (CANVAS_SIZE - img.height * fitScale) / 2
-      setZoom((fitScale - (CANVAS_SIZE * 0.3) / minDim) / ((CANVAS_SIZE * 3) / minDim - (CANVAS_SIZE * 0.3) / minDim))
+      setZoom(0)
       setLoaded(true)
     }
+    img.onerror = () => setError("เปิดรูปไม่สำเร็จ กรุณาเลือกรูปใหม่")
     img.src = imageSrc
   }, [imageSrc])
 
@@ -83,6 +95,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
     stateRef.current.y += dy
     stateRef.current.lastX = e.clientX
     stateRef.current.lastY = e.clientY
+    clampPosition()
     draw()
   }
 
@@ -102,7 +115,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
     if (!img) return
     const s = stateRef.current
     const minDim = Math.min(img.width, img.height)
-    const minScale = (CANVAS_SIZE * 0.3) / minDim
+    const minScale = CANVAS_SIZE / minDim
     const maxScale = (CANVAS_SIZE * 3) / minDim
 
     const cx = CANVAS_SIZE / 2
@@ -115,6 +128,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
     s.x = cx - (cx - s.x) * (newScale / oldScale)
     s.y = cy - (cy - s.y) * (newScale / oldScale)
     s.scale = newScale
+    clampPosition()
     setZoom((newScale - minScale) / (maxScale - minScale))
     draw()
   }
@@ -124,7 +138,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
     const img = imgRef.current
     if (!img) return
     const minDim = Math.min(img.width, img.height)
-    const minScale = (CANVAS_SIZE * 0.3) / minDim
+    const minScale = CANVAS_SIZE / minDim
     const maxScale = (CANVAS_SIZE * 3) / minDim
     const val = parseFloat(e.target.value)
     const newScale = minScale + (maxScale - minScale) * val
@@ -136,6 +150,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
     s.x = cx - (cx - s.x) * (newScale / oldScale)
     s.y = cy - (cy - s.y) * (newScale / oldScale)
     s.scale = newScale
+    clampPosition()
     setZoom(val)
     draw()
   }
@@ -163,9 +178,10 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onCancel}>
-      <div className="bg-white rounded-2xl shadow-2xl border border-purple-200 p-5 space-y-4 w-72" onClick={(e) => e.stopPropagation()}>
-        <div className="text-sm font-bold text-purple-900 text-center">Crop Photo</div>
+    <div className="ui-overlay-enter fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={saving ? undefined : onCancel}>
+      <div role="dialog" aria-modal="true" aria-labelledby="crop-photo-title" className="ui-popover ui-panel-enter rounded-2xl p-5 space-y-4 w-72" onClick={(e) => e.stopPropagation()}>
+        <div id="crop-photo-title" className="text-sm font-bold text-purple-900 text-center">Crop Photo</div>
+        {error && <p className="text-center text-xs text-red-600">{error}</p>}
 
         {/* Canvas */}
         <div className="flex justify-center">
@@ -208,15 +224,17 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel }) {
         <div className="flex gap-2">
           <button
             onClick={onCancel}
-            className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
+            disabled={saving}
+            className="ui-button ui-button-secondary flex-1 px-3 py-2 text-xs font-medium"
           >
             ยกเลิก
           </button>
           <button
             onClick={handleCrop}
-            className="flex-1 rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-purple-700 active:scale-95"
+            disabled={saving || !loaded || Boolean(error)}
+            className="ui-button ui-button-primary flex-1 px-3 py-2 text-xs font-semibold"
           >
-            ใช้รูปนี้
+            {saving ? "กำลังบันทึก…" : "ใช้รูปนี้"}
           </button>
         </div>
       </div>

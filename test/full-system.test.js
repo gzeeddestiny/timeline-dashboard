@@ -2,19 +2,22 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import { addTransitionMetrics, buildMetricRows, overdueTransitions, taskOwners } from "../api/_metrics.js"
+import { taskIdRepairTargets } from "../api/_syncCore.js"
 import { assignmentRpcArgs, validateAssignmentPatch } from "../api/assignment.js"
 import cronSync, { validCronSecret } from "../api/cron-sync.js"
 import { callAppsScript } from "../api/_appsScript.js"
 import { validateCompletion } from "../api/completion.js"
 import syncApi, { syncDecision } from "../api/sync.js"
+import taskTabsApi from "../api/task-tabs.js"
 import { blockedRecipients, validateWorkflow, workflowRpcArgs } from "../api/workflow.js"
 import { filterDashboardTasks } from "../src/lib/dashboardFilters.js"
 import { bangkokDate, daysFrom, parseSheetDate, validIsoDate } from "../src/lib/dates.js"
 import { fetchAllRows } from "../src/lib/supabasePages.js"
 import { fetchAllSheetsData } from "../src/lib/sheetsApi.js"
-import { cachePendingWrites, loadPendingWrites, taskSheetUrl } from "../src/lib/sharedState.js"
-import { responsibilityMentions } from "../src/lib/teamConfig.js"
-import { filterMyWorkTasks, myWorkMonths, partitionMyWorkTasks } from "../src/lib/workViews.js"
+import { cachePendingWrites, loadPendingWrites, mergeRemote, taskSheetUrl } from "../src/lib/sharedState.js"
+import { inspectTaskHeaders, taskRange } from "../src/lib/sheetSchema.js"
+import { responsibilityMentions, taskOwnerNames } from "../src/lib/teamConfig.js"
+import { filterMyWorkTasks, myWorkMonths, normalizeMyWorkFilters, partitionMyWorkTasks, selectNextAction } from "../src/lib/workViews.js"
 
 const tasks = [
   { taskKey: "s:1:task-a", taskId: "task-a", spreadsheetId: "s", sheetGid: 1, rowIndex: 1, clientName: "Nike JUL", month: "JUL", topic: "A", responsibility: "Tony", dueDate: "2026-07-01", done: false },
@@ -31,7 +34,7 @@ test("validates workflow patches", () => {
 })
 
 test("workflow RPC patches only fields present in the request", () => {
-  assert.deepEqual(workflowRpcArgs({ key: "s:1:task-a", note: "new note" }, "actor"), {
+  assert.deepEqual(workflowRpcArgs({ key: "s:1:task-a", note: "new note", expectedNoteVersion: 3 }, "actor"), {
     p_task_key: "s:1:task-a",
     p_status: null,
     p_has_status: false,
@@ -40,6 +43,8 @@ test("workflow RPC patches only fields present in the request", () => {
     p_priority: null,
     p_has_priority: false,
     p_actor: "actor",
+    p_expected_note_version: 3,
+    p_force_note: false,
   })
 })
 
@@ -76,7 +81,8 @@ test("enforces sync cooldown and recovers abandoned running syncs", () => {
 test("uses assignment and responsibility ownership", () => {
   const members = [{ name: "Tony" }, { name: "May" }]
   const owners = taskOwners(tasks[0], members, { "s:1": "Nike" }, { nike: { lead: "May" } })
-  assert.deepEqual(owners.sort(), ["May", "Tony"])
+  assert.deepEqual(owners, ["Tony"])
+  assert.deepEqual(taskOwnerNames(tasks[1], members, { lead: "May" }), ["May"])
 })
 
 test("matches responsibility names on Unicode-aware boundaries", () => {
@@ -93,6 +99,10 @@ test("uses Unicode boundaries for blocked notification recipients", () => {
   ]
   assert.deepEqual(
     blockedRecipients(access, new Set(), "Maya / Tony", "actor@example.com").map((entry) => entry.email),
+    ["maya@example.com"],
+  )
+  assert.deepEqual(
+    blockedRecipients(access, new Set(["May"]), "Maya", "actor@example.com").map((entry) => entry.email),
     ["maya@example.com"],
   )
 })
@@ -114,6 +124,12 @@ test("requires authentication for the user sync API", async () => {
   await syncApi({ method: "GET", headers: {}, query: {} }, response)
   assert.equal(response.statusCode, 401)
   assert.equal(response.body.error, "Authentication required")
+})
+
+test("requires authentication for task tab provisioning", async () => {
+  const response = { statusCode: 0, body: null, setHeader() {}, status(code) { this.statusCode = code; return this }, json(body) { this.body = body; return this } }
+  await taskTabsApi({ method: "POST", headers: {}, body: { action: "inspect", spreadsheetId: "sheet" } }, response)
+  assert.equal(response.statusCode, 401)
 })
 
 test("propagates Apps Script transport and application failures", async () => {
@@ -150,6 +166,46 @@ test("aborts a sync source read instead of accepting a partial Google response",
   }
 })
 
+test("quotes task ranges and skips visible non-task tabs", async () => {
+  assert.equal(taskRange("Client's Plan", "A1:F1"), "'Client''s Plan'!A1:F1")
+  assert.deepEqual(inspectTaskHeaders([" Done ", "Topic", "Responsibility", "Due Date", "Actual Submit", "Task ID"]), { valid: true, taskIdReady: true, taskIdAvailable: true })
+  const originalFetch = globalThis.fetch
+  let request = 0
+  globalThis.fetch = async () => {
+    request += 1
+    if (request === 1) return { ok: true, json: async () => ({ properties: { title: "Timeline Aug 26" }, sheets: [
+      { properties: { title: "Client's Plan", sheetId: 11, hidden: false } },
+      { properties: { title: "Summary", sheetId: 12, hidden: false } },
+    ] }) }
+    return { ok: true, json: async () => ({ valueRanges: [
+      { range: "'Client''s Plan'!A1:F2", values: [["Done", "Topic", "Responsibility", "Due Date", "Actual Submit", "Task ID"], [false, "Launch", "May", "10/08/2026", "", "task_1"]] },
+      { range: "Summary!A1:F2", values: [["Metric", "Value"], ["Open", 1]] },
+    ] }) }
+  }
+  try {
+    const result = await fetchAllSheetsData([{ spreadsheetId: "sheet", url: "https://docs.google.com/spreadsheets/d/sheet" }], "server-key")
+    assert.equal(result.tasks.length, 1)
+    assert.equal(result.tasks[0].clientName, "Client's Plan")
+    assert.equal(result.issues.filter((issue) => issue.type === "skipped_tab").length, 1)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test("rejects a mismatched source before changing a snapshot", async () => {
+  await assert.rejects(
+    fetchAllSheetsData([{ spreadsheetId: "registered", url: "https://docs.google.com/spreadsheets/d/different" }], "server-key"),
+    /Invalid Google Sheet source/,
+  )
+})
+
+test("groups automatic Task ID repairs by sheet and tab", () => {
+  assert.deepEqual(taskIdRepairTargets([
+    { type: "missing_task_id", spreadsheetId: "a", sheetGid: 1 },
+    { type: "duplicate_task_id", spreadsheetId: "a", sheetGid: 1 },
+    { type: "invalid_task_id", spreadsheetId: "a", sheetGid: 2 },
+    { type: "skipped_tab", spreadsheetId: "a", sheetGid: 3 },
+  ]), [{ spreadsheetId: "a", sheetGids: [1, 2] }])
+})
+
 test("builds overall, month and person daily metrics without fake dates", () => {
   const now = new Date("2026-07-29T03:00:00Z")
   assert.equal(bangkokDate(now), "2026-07-29")
@@ -172,6 +228,15 @@ test("counts overdue created and resolved between real sync snapshots", () => {
   assert.deepEqual(overdueTransitions(previous, current, "2026-07-29"), { overdueCreated: 1, overdueResolved: 1 })
 })
 
+test("counts a midnight rollover but not a removed task as overdue resolved", () => {
+  const previous = [
+    { task_key: "crossed", due_date: "2026-08-09", done: false },
+    { task_key: "removed", due_date: "2026-08-01", done: false },
+  ]
+  const current = [{ taskKey: "crossed", dueDate: "2026-08-09", done: false }]
+  assert.deepEqual(overdueTransitions(previous, current, "2026-08-10", "2026-08-09"), { overdueCreated: 1, overdueResolved: 0 })
+})
+
 test("calculates overdue transitions for month and person trend dimensions", () => {
   const members = [{ name: "Tony" }]
   const current = [{ ...tasks[0], taskKey: "new-overdue", dueDate: "2026-07-01" }]
@@ -191,6 +256,23 @@ test("partitions My Work and supports workflow dashboard filters", () => {
   assert.deepEqual(groups.unscheduled.map((task) => task.topic), ["D"])
   const dashboard = filterDashboardTasks(tasks.map((task) => ({ ...task, workflowStatus: workflow[task.taskKey] })), { status: "blocked", month: "all", member: "all" }, () => [], new Date("2026-07-29T10:00:00+07:00"))
   assert.deepEqual(dashboard.map((task) => task.topic), ["A"])
+  const staleDone = filterDashboardTasks([{ ...tasks[2], workflowStatus: "blocked" }], { status: "blocked", month: "all", member: "all" }, () => [], new Date("2026-07-29T10:00:00+07:00"))
+  assert.deepEqual(staleDone, [])
+  assert.equal(selectNextAction(groups).topic, "A")
+})
+
+test("sorts each My Work section by risk and due date", () => {
+  const reversed = [
+    { ...tasks[0], taskKey: "s:1:newer", dueDate: "2026-07-20", topic: "Newer" },
+    { ...tasks[0], taskKey: "s:1:older", dueDate: "2026-07-01", topic: "Older" },
+  ]
+  const groups = partitionMyWorkTasks(reversed, {}, "2026-07-29")
+  assert.deepEqual(groups.overdue.map((task) => task.topic), ["Older", "Newer"])
+})
+
+test("accepts only business priority values", () => {
+  assert.equal(validateWorkflow({ key: "s:1:task-a", priority: "urgent" }), null)
+  assert.equal(validateWorkflow({ key: "s:1:task-a", priority: "fire" }), "Invalid priority")
 })
 
 test("filters My Work text, month, workflow and sorts completed newest first", () => {
@@ -206,7 +288,7 @@ test("filters My Work text, month, workflow and sorts completed newest first", (
   assert.deepEqual(filtered.completed.map((task) => task.topic), ["Review"])
   const completed = filterMyWorkTasks(owned, { query: "", month: "all", workflow: "all" }, workflow, {})
   assert.deepEqual(completed.completed.map((task) => task.topic), ["Caption", "Review"])
-  assert.deepEqual(myWorkMonths(owned), ["AUG", "JUL"])
+  assert.deepEqual(myWorkMonths(owned), ["JUL", "AUG"])
 })
 
 test("parses Bangkok and DD/MM/YYYY dates without ambiguous fallback", () => {
@@ -253,6 +335,16 @@ test("keeps failed shared writes in a session retry outbox", () => {
   }
 })
 
+test("keeps dirty deletions as tombstones during a remote refresh", () => {
+  assert.deepEqual(mergeRemote({}, { task: "old note", other: "keep" }, new Set(["remarks:task"]), "remarks"), { other: "keep" })
+})
+
+test("normalizes corrupt My Work preferences", () => {
+  assert.deepEqual(normalizeMyWorkFilters({ query: 1, month: null, workflow: "bad", showCompleted: "yes" }), {
+    query: "", month: "all", workflow: "all", showCompleted: false,
+  })
+})
+
 test("RLS migration grants task edits to active users and settings only to admins", async () => {
   const sql = await readFile(new URL("../supabase/migrations/20260729000000_full_system.sql", import.meta.url), "utf8")
   assert.match(sql, /workflow_insert[\s\S]*private\.is_active_user\(\)/)
@@ -282,6 +374,12 @@ test("RLS migration grants task edits to active users and settings only to admin
   assert.match(cronSql, /'\*\/30 \* \* \* \*'/)
   assert.match(cronSql, /vault\.decrypted_secrets/)
   assert.doesNotMatch(cronSql, /X-Cron-Secret',\s*'[^']{32}/)
+  const prioritySql = await readFile(new URL("../supabase/migrations/20260810090000_business_priorities.sql", import.meta.url), "utf8")
+  assert.match(prioritySql, /when 'fire' then 'urgent'/)
+  assert.match(prioritySql, /'normal', 'high', 'urgent'/)
+  const appsScript = await readFile(new URL("../google-apps-script/Code.gs", import.meta.url), "utf8")
+  assert.match(appsScript, /target\.sheetGids/)
+  assert.doesNotMatch(appsScript, /spreadsheet\.getSheets\(\)\.filter\(function \(sheet\) \{ return !sheet\.isSheetHidden\(\); \}\)/)
 })
 
 test("central state migration makes team changes atomic and realtime", async () => {
@@ -303,6 +401,36 @@ test("central state migration makes team changes atomic and realtime", async () 
   assert.match(sql, /create trigger audit_team_members/)
   assert.match(sql, /create trigger audit_sheets/)
   const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8")
-  assert.match(app, /patchSystemState\(resource, key, mutation\)/)
+  assert.match(app, /patchSystemState\(resource, key, mutation, options\)/)
   assert.match(app, /cachePendingWrites\(\[\.\.\.pendingWritesRef\.current\.values\(\)\]\)/)
+})
+
+test("ready migration applies snapshots and completion atomically", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/20260810110000_ready_for_use.sql", import.meta.url), "utf8")
+  assert.match(sql, /create table if not exists public\.sync_stage_tasks/)
+  assert.match(sql, /function public\.apply_sync_snapshot\(/)
+  assert.match(sql, /on conflict \(task_key\) do update/)
+  assert.match(sql, /status = 'success'/)
+  assert.match(sql, /function public\.finalize_completion\(/)
+  assert.match(sql, /note_version bigint not null default 0/)
+  assert.match(sql, /NOTE_CONFLICT/)
+  assert.match(sql, /team-avatars/)
+  assert.match(sql, /drop table if exists public\.email_outbox/)
+  const syncCore = await readFile(new URL("../api/_syncCore.js", import.meta.url), "utf8")
+  assert.match(syncCore, /from\("sync_stage_tasks"\)\.insert/)
+  assert.match(syncCore, /rpc\("apply_sync_snapshot"/)
+  assert.match(syncCore, /action: "ensure_task_ids"/)
+  const completion = await readFile(new URL("../api/completion.js", import.meta.url), "utf8")
+  assert.match(completion, /rpc\("finalize_completion"/)
+})
+
+test("legacy migration normalizes priorities and cron has no unsent digest", async () => {
+  const migration = await readFile(new URL("../scripts/migrate-gist-to-supabase.mjs", import.meta.url), "utf8")
+  assert.match(migration, /value === "fire" \? "urgent"/)
+  assert.match(migration, /value === "think" \? "high"/)
+  assert.match(migration, /order\("task_key"\)/)
+  const cron = await readFile(new URL("../supabase/cron.sql", import.meta.url), "utf8")
+  assert.doesNotMatch(cron, /cron\.schedule\(\s*'timeline-dashboard-daily-digest'/)
+  const assignment = await readFile(new URL("../api/assignment.js", import.meta.url), "utf8")
+  assert.doesNotMatch(assignment, /Manager access required/)
 })

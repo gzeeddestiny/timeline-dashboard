@@ -23,20 +23,6 @@ export function loadTeamMembers() {
   return DEFAULT_MEMBERS
 }
 
-/** Save team members to sessionStorage */
-export function saveTeamMembers(members) {
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(members))
-}
-
-// For backward compat — modules that import TEAM_MEMBERS get the live version
-export let TEAM_MEMBERS = loadTeamMembers()
-
-/** Refresh the in-memory TEAM_MEMBERS from sessionStorage */
-export function refreshTeamMembers() {
-  TEAM_MEMBERS = loadTeamMembers()
-  return TEAM_MEMBERS
-}
-
 export const ROLES = ["creative", "ae", "media", "pm"]
 
 export const ROLE_CONFIG = {
@@ -92,15 +78,17 @@ export function responsibilityMentions(responsibility, name) {
   return new RegExp(`(^|[^\\p{L}\\p{N}\\p{M}])${escaped}($|[^\\p{L}\\p{N}\\p{M}])`, "iu").test(responsibility)
 }
 
-/**
- * Fuzzy match team members from a responsibility string.
- * Uses the live TEAM_MEMBERS cache.
- */
-export function matchMembers(str) {
+export function matchMembersFromList(str, members = []) {
   if (!str) return []
-  const members = TEAM_MEMBERS
   const order = { creative: 0, ae: 1, media: 2, pm: 3 }
   return members
-    .filter((m) => responsibilityMentions(str, m.name))
+    .filter((member) => responsibilityMentions(str, member.name))
     .sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9))
+}
+
+// Responsibility is the explicit owner. Brand assignment is only a fallback
+// for tasks whose Responsibility does not name a known team member.
+export function taskOwnerNames(task, members = [], assignment = {}) {
+  const explicit = matchMembersFromList(task?.responsibility, members).map((member) => member.name)
+  return explicit.length ? explicit : [...new Set(Object.values(assignment).filter(Boolean))]
 }

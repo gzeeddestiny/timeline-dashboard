@@ -15,6 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { bangkokDate, daysFrom, parseSheetDate } from "./dates.js"
+import { inspectTaskHeaders, taskRange } from "./sheetSchema.js"
 
 const BASE_URL = "https://sheets.googleapis.com/v4/spreadsheets"
 
@@ -48,12 +49,6 @@ export function buildFileColorMap(tasks) {
     }
   }
   return map
-}
-
-/** Get file color for a single task. Provide the prebuilt map. */
-export function getFileColor(task, colorMap) {
-  const key = task.spreadsheetId || task.month || "unknown"
-  return colorMap[key] || FILE_COLORS[0]
 }
 
 // ── Brand Name Extraction ─────────────────────────────────────────────────────
@@ -156,11 +151,10 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
   const seenTaskKeys = new Set()
 
   for (const sheet of sheetList) {
-    const spreadsheetId = parseSheetId(sheet.url)
-
-    if (!spreadsheetId) {
-      console.warn(`[sheetsApi] Cannot parse spreadsheet ID from: ${sheet.url}`)
-      continue
+    const urlSpreadsheetId = parseSheetId(sheet.url || "")
+    const spreadsheetId = sheet.spreadsheetId || urlSpreadsheetId
+    if (!spreadsheetId || (sheet.url && !urlSpreadsheetId) || (urlSpreadsheetId && urlSpreadsheetId !== spreadsheetId)) {
+      throw new Error(`Invalid Google Sheet source: ${sheet.url || spreadsheetId || "unknown"}`)
     }
 
     // Skip if we already fetched this spreadsheet (e.g. duplicate URL in list)
@@ -168,7 +162,7 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
     seenSpreadsheets.add(spreadsheetId)
 
     // 1️⃣  Spreadsheet metadata → get title + all tab names
-    const metaRes = await fetch(`${BASE_URL}/${spreadsheetId}?key=${apiKey}`)
+    const metaRes = await fetch(`${BASE_URL}/${encodeURIComponent(spreadsheetId)}?fields=properties.title,sheets.properties&key=${encodeURIComponent(apiKey)}`, { signal: AbortSignal.timeout(15_000) })
     if (!metaRes.ok) throw new Error(`Google Sheets metadata failed (${metaRes.status})`)
     const meta    = await metaRes.json()
 
@@ -192,6 +186,7 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
         gid:   t.properties.sheetId,
       }))
     const tabNames = tabInfos.map((t) => t.title)
+    if (tabNames.length === 0) continue
 
     // gidMap: tab title → gid (exact + trimmed keys for robust lookup)
     const gidMap = new Map()
@@ -200,10 +195,10 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
       gidMap.set(info.title.trim(), info.gid)
     }
 
-    const ranges = tabNames.map((t) => `ranges=${encodeURIComponent(`${t}!A2:F`)}`).join("&")
-    const batchUrl = `${BASE_URL}/${spreadsheetId}/values:batchGet?${ranges}&key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE`
+    const ranges = tabNames.map((title) => `ranges=${encodeURIComponent(taskRange(title))}`).join("&")
+    const batchUrl = `${BASE_URL}/${encodeURIComponent(spreadsheetId)}/values:batchGet?${ranges}&key=${encodeURIComponent(apiKey)}&valueRenderOption=UNFORMATTED_VALUE`
 
-    const batchRes = await fetch(batchUrl)
+    const batchRes = await fetch(batchUrl, { signal: AbortSignal.timeout(15_000) })
     if (!batchRes.ok) throw new Error(`Google Sheets data failed (${batchRes.status})`)
     const batchData = await batchRes.json()
 
@@ -230,7 +225,18 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
         tabGid = match?.gid ?? 0
       }
 
-      for (const [rowIdx, row] of (valueRange.values ?? []).entries()) {
+      const values = valueRange.values ?? []
+      const header = inspectTaskHeaders(values[0])
+      if (!header.valid) {
+        issues.push({ spreadsheetId, sheetGid: tabGid, rowIndex: 1, clientName: tabTitle, type: "skipped_tab", message: "Header A:E does not match the task schema" })
+        continue
+      }
+      if (!header.taskIdAvailable) {
+        issues.push({ spreadsheetId, sheetGid: tabGid, rowIndex: 1, clientName: tabTitle, type: "invalid_task_id_header", message: "Column F is already used" })
+        continue
+      }
+
+      for (const [rowIdx, row] of values.slice(1).entries()) {
         // A=status(bool)  B=topic  C=responsibility  D=dueDate  E=actualSubmit
         const [statusRaw, topic, responsibility, dueDateRaw, actualSubmitRaw, taskIdRaw] = row
 
@@ -245,6 +251,10 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
         const source = { spreadsheetId, sheetGid: tabGid, rowIndex: rowIdx + 2, clientName: tabTitle }
         if (!taskId) {
           issues.push({ ...source, type: "missing_task_id", message: "Task ID is blank" })
+          continue
+        }
+        if (!/^[A-Za-z0-9_-]{1,200}$/.test(taskId)) {
+          issues.push({ ...source, type: "invalid_task_id", message: `Invalid Task ID: ${taskId}` })
           continue
         }
         const stableKey = `${spreadsheetId}:${tabGid}:${taskId}`
@@ -297,7 +307,7 @@ export function categorizeTasks(tasks) {
   const clientStats = {}
   tasks.forEach((t) => {
     if (!String(t.topic || "").trim()) return
-    const statsKey = `${t.clientName}::${t.spreadsheetId}`
+    const statsKey = `${t.clientName}::${t.spreadsheetId}::${t.sheetGid}`
     if (!clientStats[statsKey]) clientStats[statsKey] = { total: 0, done: 0 }
     clientStats[statsKey].total++
     if (t.done) clientStats[statsKey].done++
@@ -320,99 +330,4 @@ export function categorizeTasks(tasks) {
 
   const unscheduled = tasks.filter((task) => !task.done && !task.dueDate)
   return { overdue, upcoming, unscheduled, clientStats, allTasks: tasks }
-}
-
-// ── Timeline Data Preparation ────────────────────────────────────────────────
-
-/**
- * Prepare data for the Monday.com-style Timeline view.
- *
- * For each client (tab), the "start date" is the earliest dueDate in that group.
- * Each task's bar spans from client startDate → task's own dueDate.
- *
- * @param {Array} allTasks — tasks with valid dueDates (from categorizeTasks)
- * @returns {{ clients: Array, dateRange: { start: string, end: string }, totalDays: number }}
- */
-export function prepareTimelineData(allTasks) {
-  if (!allTasks || allTasks.length === 0) {
-    return { clients: [], dateRange: { start: "", end: "" }, totalDays: 0 }
-  }
-
-  // Filter to only valid dates, then group by clientName
-  const validTasks = allTasks.filter((t) => {
-    if (!t.dueDate) return false
-    const d = new Date(t.dueDate)
-    return !isNaN(d.getTime())
-  })
-
-  if (validTasks.length === 0) {
-    return { clients: [], dateRange: { start: "", end: "" }, totalDays: 0 }
-  }
-
-  const groups = {}
-  validTasks.forEach((t) => {
-    const key = `${t.clientName}::${t.spreadsheetId}`
-    if (!groups[key]) groups[key] = []
-    groups[key].push(t)
-  })
-
-  // Per-client stats
-  const clientStats = {}
-  validTasks.forEach((t) => {
-    const statsKey = `${t.clientName}::${t.spreadsheetId}`
-    if (!clientStats[statsKey]) clientStats[statsKey] = { total: 0, done: 0 }
-    clientStats[statsKey].total++
-    if (t.done) clientStats[statsKey].done++
-  })
-
-  let globalMin = null
-  let globalMax = null
-
-  const clients = Object.entries(groups)
-    .map(([groupKey, tasks]) => {
-      const name = tasks[0]?.clientName || groupKey
-      // Sort tasks by dueDate
-      tasks.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
-
-      const dates = tasks.map((t) => new Date(t.dueDate))
-      const earliest = dates[0]
-      const latest = dates[dates.length - 1]
-
-      const startDate = earliest.toISOString().split("T")[0]
-      const endDate = latest.toISOString().split("T")[0]
-
-      if (!globalMin || earliest < globalMin) globalMin = earliest
-      if (!globalMax || latest > globalMax) globalMax = latest
-
-      return {
-        name,
-        startDate,
-        endDate,
-        spreadsheetId: tasks[0]?.spreadsheetId || "",
-        month: tasks[0]?.month || "",
-        stats: clientStats[groupKey] || { total: 0, done: 0 },
-        tasks: tasks.map((t) => ({
-          ...t,
-          startDate, // client's earliest dueDate
-        })),
-      }
-    })
-    .sort((a, b) => a.name.localeCompare(b.name))
-
-  // Add 5-day padding on each side
-  const padStart = new Date(globalMin)
-  padStart.setDate(padStart.getDate() - 5)
-  const padEnd = new Date(globalMax)
-  padEnd.setDate(padEnd.getDate() + 5)
-
-  const totalDays = Math.ceil((padEnd - padStart) / 86_400_000) + 1
-
-  return {
-    clients,
-    dateRange: {
-      start: padStart.toISOString().split("T")[0],
-      end: padEnd.toISOString().split("T")[0],
-    },
-    totalDays,
-  }
 }

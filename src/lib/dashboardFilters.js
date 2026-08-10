@@ -24,11 +24,14 @@ export function sortDashboardTasks(tasks, today = new Date()) {
 }
 
 export function filterDashboardTasks(tasks, filters, assignedNames = () => [], today = new Date()) {
+  const workflowStatuses = new Set(["not_started", "in_progress", "waiting_client", "blocked"])
   const filtered = tasks.filter((task) => {
     if (filters.status !== "all") {
       const dateStatus = dashboardStatus(task, today)
       const workflowStatus = task.workflowStatus || "not_started"
-      if (filters.status !== dateStatus && filters.status !== workflowStatus) return false
+      if (workflowStatuses.has(filters.status)) {
+        if (task.done || filters.status !== workflowStatus) return false
+      } else if (filters.status !== dateStatus) return false
     }
     if (filters.month !== "all" && task.month !== filters.month) return false
     if (filters.member !== "all" && !assignedNames(task).includes(filters.member)) return false

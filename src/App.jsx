@@ -1,9 +1,9 @@
 import React, { Suspense, lazy, useState, useEffect, useRef, useCallback } from "react"
 import TaskTable, { CompletedClients } from "./components/TimelineTable"
 import { categorizeTasks, extractBrandName } from "./lib/sheetsApi"
-import { matchMembers, loadTeamMembers, saveTeamMembers, refreshTeamMembers } from "./lib/teamConfig"
+import { loadTeamMembers, taskOwnerNames } from "./lib/teamConfig"
 import { cachePendingWrites, cacheSharedState, loadCachedSharedState, loadPendingWrites, mergeRemote, normalizeBrandKey, parseSheetUrl, sheetsFromLegacyHash, tabKey, taskKey as sharedTaskKey } from "./lib/sharedState"
-import { fetchSystemState, patchSystemState, renameSystemBrand, systemSyncStatus, triggerSystemSync, updateSystemCompletion } from "./lib/fullSystem"
+import { deleteTeamAvatar, fetchSystemAnalytics, fetchSystemState, patchSystemState, renameSystemBrand, systemSyncStatus, triggerSystemSync, updateSystemCompletion, uploadTeamAvatar } from "./lib/fullSystem"
 import { isSupabaseConfigured, supabase } from "./lib/supabase"
 import TeamFilterBar from "./components/TeamFilterBar"
 import TeamManager from "./components/TeamManager"
@@ -18,10 +18,12 @@ import magicLogo from "./assets/magic-logo.svg"
 const DashboardView = lazy(() => import("./components/DashboardView"))
 
 function sessionValue(key, fallback = null) {
-  const value = sessionStorage.getItem(key) ?? localStorage.getItem(key)
-  if (value !== null) sessionStorage.setItem(key, value)
-  localStorage.removeItem(key)
-  return value ?? fallback
+  try {
+    const value = sessionStorage.getItem(key) ?? localStorage.getItem(key)
+    if (value !== null) sessionStorage.setItem(key, value)
+    localStorage.removeItem(key)
+    return value ?? fallback
+  } catch { return fallback }
 }
 
 function overlayPendingRecords(base, pending, resource) {
@@ -47,27 +49,6 @@ function overlayPendingSheets(base, pending) {
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
-function IconSync({ className }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-    </svg>
-  )
-}
-function IconCheck({ className }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  )
-}
-function IconTrash({ className }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-    </svg>
-  )
-}
 function IconWarning({ className }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -83,6 +64,7 @@ const SYNC_COOLDOWN_MS = 5 * 60 * 1000 // 5 minutes between auto-syncs
 export default function App() {
   const { access, user, signOut } = useAuth()
   const isAdmin = access?.role === "admin" && isSupabaseConfigured
+  const canManageAssignments = isSupabaseConfigured
   const [cachedShared] = useState(loadCachedSharedState)
   const [initialPendingWrites] = useState(loadPendingWrites)
   const [now, setNow] = useState(() => Date.now())
@@ -96,7 +78,10 @@ export default function App() {
   const [isSyncing, setIsSyncing]   = useState(false)
   // Restore cached live data so the page shows real data immediately on reload
   const [liveTasks, setLiveTasks]   = useState(() => {
-    try { return JSON.parse(sessionValue("magic-live-tasks", "null")) }
+    try {
+      const cached = JSON.parse(sessionValue("magic-live-task-rows", sessionValue("magic-live-tasks", "null")))
+      return cached ? categorizeTasks(Array.isArray(cached) ? cached : cached.allTasks || []) : null
+    }
     catch { return null }
   })
   const [syncError, setSyncError]   = useState(null)
@@ -104,7 +89,6 @@ export default function App() {
     const ts = sessionValue("magic-last-synced")
     return ts ? new Date(ts) : null
   })
-  const [copied, setCopied]         = useState(false)
   const [viewMode, setViewMode] = useState(() => {
     const saved = localStorage.getItem(`magic-view:${user?.email || "legacy"}`)
     return saved || (access?.role === "employee" ? "my" : "dashboard")
@@ -121,15 +105,33 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState(() => Object.fromEntries(initialPendingWrites.map(({ resource, key }) => [`${resource}:${key}`, "failed"])))
   const [brands, setBrands] = useState(() => overlayPendingRecords(cachedShared?.brands, initialPendingWrites, "brands"))
   const [workflow, setWorkflow] = useState(() => overlayPendingRecords(cachedShared?.workflow, initialPendingWrites, "workflow"))
+  const [noteVersions, setNoteVersions] = useState(() => cachedShared?.noteVersions || {})
+  const [noteConflicts, setNoteConflicts] = useState({})
   const [dailyMetrics, setDailyMetrics] = useState([])
   const [taskEvents, setTaskEvents] = useState([])
   const [syncStatus, setSyncStatus] = useState(null)
   const [selectedTaskKey, setSelectedTaskKey] = useState(null)
   const syncingRef = useRef(false)
+  const refreshVersionRef = useRef(0)
+  const completionLocksRef = useRef(new Set())
   const dirtyRef = useRef(new Set(initialPendingWrites.map(({ resource, key }) => `${resource}:${key}`)))
   const pendingWritesRef = useRef(new Map(initialPendingWrites.map((item) => [`${item.resource}:${item.key}`, item])))
   const writeVersionsRef = useRef(new Map())
   const writeChainsRef = useRef(new Map())
+  const addSheetInFlightRef = useRef(false)
+
+  const refreshAnalytics = useCallback(async () => {
+    if (viewMode !== "dashboard" || !isSupabaseConfigured) return null
+    try {
+      const analytics = await fetchSystemAnalytics()
+      setDailyMetrics(analytics.dailyMetrics)
+      setTaskEvents(analytics.taskEvents)
+      return analytics
+    } catch (error) {
+      setSharedError(`โหลด Trend/Activity ไม่สำเร็จ: ${error.message}`)
+      return null
+    }
+  }, [viewMode])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000)
@@ -155,47 +157,60 @@ export default function App() {
     return overlayPendingRecords(base, initialPendingWrites, "assignments")
   })
 
-  const persistShared = useCallback(async (resource, key, value, mutation = value) => {
+  const persistShared = useCallback(async (resource, key, value, mutation = value, options = {}) => {
     const dirtyKey = `${resource}:${key}`
     const version = (writeVersionsRef.current.get(dirtyKey) || 0) + 1
     writeVersionsRef.current.set(dirtyKey, version)
     dirtyRef.current.add(dirtyKey)
-    pendingWritesRef.current.set(dirtyKey, { resource, key, value, mutation })
+    pendingWritesRef.current.set(dirtyKey, { resource, key, value, mutation, options })
     cachePendingWrites([...pendingWritesRef.current.values()])
     setSaveStatus((prev) => ({ ...prev, [dirtyKey]: "saving" }))
     const previous = writeChainsRef.current.get(dirtyKey) || Promise.resolve()
-    const request = previous.catch(() => {}).then(() => patchSystemState(resource, key, mutation))
+    const request = previous.catch(() => {}).then(() => patchSystemState(resource, key, mutation, options))
     writeChainsRef.current.set(dirtyKey, request)
     try {
       const result = await request
       if (writeVersionsRef.current.get(dirtyKey) === version) {
+        refreshVersionRef.current += 1
         dirtyRef.current.delete(dirtyKey)
         pendingWritesRef.current.delete(dirtyKey)
         cachePendingWrites([...pendingWritesRef.current.values()])
         setSaveStatus((prev) => ({ ...prev, [dirtyKey]: "saved" }))
+        if (resource === "remarks") {
+          if (Number.isInteger(result?.noteVersion)) setNoteVersions((current) => ({ ...current, [key]: result.noteVersion }))
+          setNoteConflicts((current) => { const next = { ...current }; delete next[key]; return next })
+        }
         if (result?.warning) setSharedError(`บันทึกสำเร็จ แต่ ${result.warning}`)
         else if (pendingWritesRef.current.size === 0) setSharedError(null)
       }
+      refreshAnalytics()
       return true
     } catch (error) {
       if (writeVersionsRef.current.get(dirtyKey) === version) {
         setSaveStatus((prev) => ({ ...prev, [dirtyKey]: "failed" }))
-        setSharedError(`${error.message} — ข้อมูลยังอยู่ในเครื่อง กด Retry เพื่อบันทึกอีกครั้ง`)
+        if (resource === "remarks" && error.status === 409) {
+          setNoteConflicts((current) => ({ ...current, [key]: error.data }))
+          setRemarks((current) => error.data.currentNote ? { ...current, [key]: error.data.currentNote } : Object.fromEntries(Object.entries(current).filter(([recordKey]) => recordKey !== key)))
+          setNoteVersions((current) => ({ ...current, [key]: error.data.noteVersion || 0 }))
+          setSharedError("Note มีการแก้ไขจากอีกหน้าจอ กรุณาเลือกโหลดค่าล่าสุดหรือบันทึกทับ")
+        } else setSharedError(`${error.message} — ข้อมูลยังอยู่ในเครื่อง กด Retry เพื่อบันทึกอีกครั้ง`)
       }
       return false
     } finally {
       if (writeChainsRef.current.get(dirtyKey) === request) writeChainsRef.current.delete(dirtyKey)
     }
-  }, [])
+  }, [refreshAnalytics])
 
   const retryPendingWrites = useCallback(() => {
     const pending = [...pendingWritesRef.current.values()]
-    return Promise.all(pending.map(({ resource, key, value, mutation }) => persistShared(resource, key, value, mutation)))
+    return Promise.all(pending.map(({ resource, key, value, mutation, options }) => persistShared(resource, key, value, mutation, options)))
   }, [persistShared])
 
   const refreshShared = useCallback(async () => {
+    const requestVersion = ++refreshVersionRef.current
     try {
       const remote = await fetchSystemState()
+      if (requestVersion !== refreshVersionRef.current) return null
       setSheets((local) => {
         const remoteMap = Object.fromEntries((remote.sheets || []).map((sheet) => [sheet.spreadsheetId, sheet]))
         const localIds = new Set(local.map((sheet) => sheet.spreadsheetId))
@@ -208,8 +223,6 @@ export default function App() {
         return Object.values(remoteMap)
       })
       if (!dirtyRef.current.has("teamMembers:all") && Array.isArray(remote.teamMembers)) {
-        saveTeamMembers(remote.teamMembers)
-        refreshTeamMembers()
         setTeamMembers(remote.teamMembers)
       }
       setBrands((local) => mergeRemote(local, remote.brands, dirtyRef.current, "brands"))
@@ -217,22 +230,32 @@ export default function App() {
       setRemarks((local) => mergeRemote(local, remote.remarks, dirtyRef.current, "remarks"))
       setPriorities((local) => mergeRemote(local, remote.priorities, dirtyRef.current, "priorities"))
       setWorkflow((local) => mergeRemote(local, remote.workflow, dirtyRef.current, "workflow"))
-      setDailyMetrics(remote.dailyMetrics || [])
-      setTaskEvents(remote.taskEvents || [])
+      setNoteVersions(remote.noteVersions || {})
       setSyncStatus(remote.syncStatus || null)
       if (remote.tasks) {
-        const categorized = categorizeTasks(remote.tasks)
-        setLiveTasks(categorized)
+        setLiveTasks((local) => {
+          const localByKey = new Map((local?.allTasks || []).map((task) => [sharedTaskKey(task), task]))
+          const tasks = remote.tasks.map((task) => completionLocksRef.current.has(sharedTaskKey(task)) ? localByKey.get(sharedTaskKey(task)) || task : task)
+          return categorizeTasks(tasks)
+        })
       }
       if (remote.updatedAt) setLastSynced(new Date(remote.updatedAt))
-      cacheSharedState(remote)
+      cacheSharedState({ ...remote, tasks: undefined })
       if (pendingWritesRef.current.size === 0) setSharedError(null)
       return remote
     } catch (error) {
+      if (requestVersion !== refreshVersionRef.current) return null
       setSharedError(`${error.message} — กำลังใช้ข้อมูล cache ในเครื่อง`)
       return null
     }
   }, [])
+
+  useEffect(() => {
+    if (viewMode !== "dashboard" || !isSupabaseConfigured) return undefined
+    refreshAnalytics()
+    const timer = setInterval(refreshAnalytics, 30_000)
+    return () => clearInterval(timer)
+  }, [refreshAnalytics, viewMode])
 
   useEffect(() => {
     if (!isSupabaseConfigured) return undefined
@@ -249,9 +272,10 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "assignments" }, scheduleRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "brands" }, scheduleRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "sync_runs" }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "task_events" }, refreshAnalytics)
       .subscribe()
     return () => { clearTimeout(refreshTimer); supabase.removeChannel(channel) }
-  }, [refreshShared])
+  }, [refreshAnalytics, refreshShared])
 
   useEffect(() => {
     refreshShared()
@@ -288,20 +312,34 @@ export default function App() {
     localStorage.setItem(`magic-view:${user?.email || "legacy"}`, viewMode)
   }, [user?.email, viewMode])
 
-  useEffect(() => { sessionStorage.setItem("magic-sheets", JSON.stringify(sheets)) }, [sheets])
-  useEffect(() => { sessionStorage.setItem("magic-remarks", JSON.stringify(remarks)) }, [remarks])
-  useEffect(() => { sessionStorage.setItem("magic-priorities", JSON.stringify(priorities)) }, [priorities])
-  useEffect(() => { sessionStorage.setItem("magic-assignments", JSON.stringify(assignments)) }, [assignments])
   useEffect(() => {
     if (filterMember) localStorage.setItem(tableFilterKey, filterMember)
     else localStorage.removeItem(tableFilterKey)
   }, [filterMember, tableFilterKey])
 
   const updateTeamMembers = (newMembers) => {
-    saveTeamMembers(newMembers)
-    refreshTeamMembers()
     setTeamMembers(newMembers)
     return persistShared("teamMembers", "all", newMembers)
+  }
+
+  const updateTeamAvatar = async (idx, dataUrl) => {
+    try {
+      const avatar = await uploadTeamAvatar(dataUrl)
+      const previous = teamMembers[idx]?.avatar
+      const saved = await updateTeamMembers(teamMembers.map((member, index) => index === idx ? { ...member, avatar } : member))
+      if (saved && previous) deleteTeamAvatar(previous).catch(() => {})
+      return true
+    } catch (error) {
+      setSharedError(error.message)
+      return false
+    }
+  }
+
+  const removeTeamAvatar = async (idx) => {
+    const previous = teamMembers[idx]?.avatar
+    const saved = await updateTeamMembers(teamMembers.map((member, index) => index === idx ? { ...member, avatar: "" } : member))
+    if (saved && previous) deleteTeamAvatar(previous).catch(() => {})
+    return saved
   }
 
   const updateRecord = useCallback((resource, setter, key, value) => {
@@ -318,7 +356,29 @@ export default function App() {
     return persistShared(resource, key, value || null)
   }, [persistShared])
 
-  const updateRemark = useCallback((key, value) => updateRecord("remarks", setRemarks, key, value), [updateRecord])
+  const updateRemark = useCallback((key, value, options = {}) => {
+    if (!isSupabaseConfigured) return updateRecord("remarks", setRemarks, key, value)
+    setRemarks((current) => {
+      const next = { ...current }
+      if (value) next[key] = value
+      else delete next[key]
+      return next
+    })
+    const expectedNoteVersion = options.expectedNoteVersion ?? noteVersions[key] ?? 0
+    return persistShared("remarks", key, value, value || null, { ...options, expectedNoteVersion })
+  }, [noteVersions, persistShared, updateRecord])
+  const discardRemarkConflict = useCallback((key, value, version) => {
+    const dirtyKey = `remarks:${key}`
+    writeVersionsRef.current.set(dirtyKey, (writeVersionsRef.current.get(dirtyKey) || 0) + 1)
+    dirtyRef.current.delete(dirtyKey)
+    pendingWritesRef.current.delete(dirtyKey)
+    cachePendingWrites([...pendingWritesRef.current.values()])
+    setRemarks((current) => value ? { ...current, [key]: value } : Object.fromEntries(Object.entries(current).filter(([recordKey]) => recordKey !== key)))
+    setNoteVersions((current) => ({ ...current, [key]: version }))
+    setNoteConflicts((current) => { const next = { ...current }; delete next[key]; return next })
+    setSaveStatus((current) => { const next = { ...current }; delete next[dirtyKey]; return next })
+    if (pendingWritesRef.current.size === 0) setSharedError(null)
+  }, [])
   const updatePriority = useCallback((key, value) => updateRecord("priorities", setPriorities, key, value), [updateRecord])
   const updateWorkflow = useCallback((key, value) => updateRecord("workflow", setWorkflow, key, value), [updateRecord])
   const updateAssignment = useCallback((key, value, mutation) => {
@@ -359,17 +419,17 @@ export default function App() {
   const brandNameForTask = useCallback((task) => brands[tabKey(task)] || extractBrandName(task.clientName), [brands])
   const assignmentKeyForTask = useCallback((task) => normalizeBrandKey(brandNameForTask(task)), [brandNameForTask])
   const assignmentForTask = useCallback((task) => assignments[assignmentKeyForTask(task)] || assignments[task.clientName] || {}, [assignments, assignmentKeyForTask])
+  const canEditTask = useCallback(() => isSupabaseConfigured, [])
   const openTask = useCallback((taskOrKey) => setSelectedTaskKey(typeof taskOrKey === "string" ? taskOrKey : sharedTaskKey(taskOrKey)), [])
 
   const applyTaskCompletion = (task, done, actualSubmit) => {
     const match = (candidate) => candidate.spreadsheetId === task.spreadsheetId &&
       candidate.sheetGid === task.sheetGid && candidate.taskId === task.taskId
-    setLiveTasks((prev) => prev && ({
-      ...prev,
-      overdue: prev.overdue.map((candidate) => match(candidate) ? { ...candidate, done, actualSubmit } : candidate),
-      upcoming: prev.upcoming.map((candidate) => match(candidate) ? { ...candidate, done, actualSubmit } : candidate),
-      allTasks: prev.allTasks.map((candidate) => match(candidate) ? { ...candidate, done, actualSubmit } : candidate),
-    }))
+    setLiveTasks((prev) => {
+      if (!prev) return prev
+      const nextTasks = prev.allTasks.map((candidate) => match(candidate) ? { ...candidate, done, actualSubmit } : candidate)
+      return categorizeTasks(nextTasks)
+    })
   }
 
   // Optimistic update with rollback when Apps Script rejects the write.
@@ -378,6 +438,9 @@ export default function App() {
       setSyncError("โหมด Localhost นี้เป็นแบบอ่านอย่างเดียวจนกว่าจะเชื่อม Supabase")
       return false
     }
+    const key = sharedTaskKey(task)
+    if (completionLocksRef.current.has(key)) return false
+    completionLocksRef.current.add(key)
     const newActualSubmit = newDone ? bangkokDate() : null
     applyTaskCompletion(task, newDone, newActualSubmit)
     let saved = false
@@ -389,6 +452,7 @@ export default function App() {
           await syncData(true)
         }
         saved = true
+        await refreshShared()
       } else {
         throw new Error("Completion requires the authenticated full-system runtime")
       }
@@ -399,49 +463,44 @@ export default function App() {
       applyTaskCompletion(task, task.done, task.actualSubmit || null)
       setSyncError("บันทึกสถานะกลับ Google Sheet ไม่สำเร็จ ระบบคืนค่าเดิมแล้ว กรุณาลองใหม่")
     }
+    completionLocksRef.current.delete(key)
     return saved
   }
 
   // Persist live tasks cache + last synced timestamp
   useEffect(() => {
-    if (liveTasks) sessionStorage.setItem("magic-live-tasks", JSON.stringify(liveTasks))
+    if (!liveTasks) return
+    try {
+      sessionStorage.setItem("magic-live-task-rows", JSON.stringify(liveTasks.allTasks))
+      sessionStorage.removeItem("magic-live-tasks")
+    } catch { /* cache is optional */ }
   }, [liveTasks])
   useEffect(() => {
-    if (lastSynced) sessionStorage.setItem("magic-last-synced", lastSynced.toISOString())
+    if (lastSynced) try { sessionStorage.setItem("magic-last-synced", lastSynced.toISOString()) }
+    catch { /* cache is optional */ }
   }, [lastSynced])
 
-  const copyShareLink = () => {
-    const stableUrl = `${window.location.origin}${window.location.pathname}`
-    navigator.clipboard.writeText(stableUrl).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
-  }
-
   // ── Filter by team member ──
-  // Check BOTH: client-level assignment AND per-task responsibility
+  // Explicit Responsibility wins; brand assignment is the fallback.
   const memberFilter = (task) => {
     if (!filterMember) return true
-    if (Object.values(assignmentForTask(task)).includes(filterMember)) return true
-    const members = matchMembers(task.responsibility)
-    return members.some((m) => m.name === filterMember)
+    return taskOwnerNames(task, teamMembers, assignmentForTask(task)).includes(filterMember)
   }
 
   const rawOverdue = liveTasks?.overdue || []
   const rawUpcoming = liveTasks?.upcoming || []
+  const rawUnscheduled = liveTasks?.unscheduled || []
   const displayClientStats = liveTasks?.clientStats || {}
   const rawAllTasks = liveTasks?.allTasks || []
   const selectedTask = rawAllTasks.find((task) => sharedTaskKey(task) === selectedTaskKey) || null
 
   const displayOverdue  = filterMember ? rawOverdue.filter(memberFilter)  : rawOverdue
   const displayUpcoming = filterMember ? rawUpcoming.filter(memberFilter) : rawUpcoming
+  const displayUnscheduled = filterMember ? rawUnscheduled.filter(memberFilter) : rawUnscheduled
   const displayAllTasks = filterMember ? rawAllTasks.filter(memberFilter) : rawAllTasks
   const myMemberName = access?.member_name || ""
   const myTasks = myMemberName
-    ? rawAllTasks.filter((task) => {
-      if (Object.values(assignmentForTask(task)).includes(myMemberName)) return true
-      return matchMembers(task.responsibility).some((member) => member.name === myMemberName)
-    })
+    ? rawAllTasks.filter((task) => taskOwnerNames(task, teamMembers, assignmentForTask(task)).includes(myMemberName))
     : []
 
   const tableProps = {
@@ -460,10 +519,12 @@ export default function App() {
     onOpenTask: openTask,
     workflow,
     onUpdateWorkflow: updateWorkflow,
-    canManageAssignments: isSupabaseConfigured,
+    canManageAssignments,
+    canEditTask,
   }
 
   const addSheet = async () => {
+    if (addSheetInFlightRef.current) return
     const sheet = parseSheetUrl(inputUrl)
     if (!sheet) {
       setSharedError("URL Google Sheet ไม่ถูกต้อง")
@@ -473,10 +534,13 @@ export default function App() {
       setSharedError("Google Sheet นี้เชื่อมต่ออยู่แล้ว")
       return
     }
-    const saved = await persistShared("sheets", sheet.spreadsheetId, sheet.url)
-    if (!saved) return
-    setSheets((prev) => [...prev, sheet])
-    setInputUrl("")
+    addSheetInFlightRef.current = true
+    try {
+      const saved = await persistShared("sheets", sheet.spreadsheetId, sheet.url)
+      if (!saved) return
+      setSheets((prev) => prev.some((current) => current.spreadsheetId === sheet.spreadsheetId) ? prev : [...prev, sheet])
+      setInputUrl("")
+    } finally { addSheetInFlightRef.current = false }
   }
 
   const removeSheet = async (spreadsheetId) => {
@@ -505,6 +569,7 @@ export default function App() {
           }
         }
         await refreshShared()
+        await refreshAnalytics()
       } else {
         throw new Error("ต้องเชื่อม Supabase ก่อนจึงจะ Sync ข้อมูลกลางได้")
       }
@@ -519,7 +584,7 @@ export default function App() {
       syncingRef.current = false
       setIsSyncing(false)
     }
-  }, [refreshShared, sheets])
+  }, [refreshAnalytics, refreshShared, sheets])
 
   const sheetSignatureRef = useRef("")
   useEffect(() => {
@@ -535,13 +600,11 @@ export default function App() {
     if (sheetListChanged || cacheExpired) syncData()
   }, [sheets, lastSynced, syncData])
 
-  const handleKeyDown = (e) => { if (e.key === "Enter") addSheet() }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-purple-50/60">
+    <div className="min-h-screen bg-[var(--ui-canvas)] text-[var(--ui-text)]">
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm shadow-[0_1px_3px_rgba(147,51,234,0.08)]">
+      <header className="sticky top-0 z-10 border-b border-[var(--ui-border)] bg-white">
         {/* Row 1: Logo + View tabs + actions */}
         <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2">
           {/* Left: Logo + Brand */}
@@ -549,26 +612,28 @@ export default function App() {
             <img src={magicLogo} alt="MAGIC Digital Marketing Agency" className="h-7 w-7 sm:h-8 sm:w-8 object-contain" />
             <div className="hidden sm:block leading-tight">
               <span className="text-sm font-black tracking-tight text-purple-900">MAGIC</span>
-              <span className="text-sm font-light text-purple-400 ml-1">Timeline</span>
+              <span className="ml-1 text-sm font-normal text-[var(--ui-muted)]">Timeline</span>
             </div>
           </div>
 
-          <div className="h-6 w-px bg-purple-100 shrink-0" />
+          <div className="h-6 w-px bg-[var(--ui-border)] shrink-0" />
 
           {/* Center: View tabs */}
-          <div className="flex items-center gap-0.5 rounded-lg bg-purple-50/80 p-0.5 shrink-0">
+          <div className="flex items-center gap-0.5 rounded-lg bg-[var(--ui-surface-subtle)] p-0.5 shrink-0">
             {[
               { mode: "my", label: "My Work", icon: "M9 12l2 2 4-4M5 4h14v16H5z" },
-              { mode: "table", label: "All Work", icon: "M3 10h18M3 6h18M3 14h18M3 18h18" },
-              { mode: "dashboard", label: "Management", icon: "M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10-2a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z" },
+              { mode: "table", label: "Explorer", icon: "M3 10h18M3 6h18M3 14h18M3 18h18" },
+              { mode: "dashboard", label: "Timeline", icon: "M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10-2a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z" },
             ].map(({ mode, label, icon }) => (
               <button
                 key={mode}
                 onClick={() => setViewMode(mode)}
-                className={`flex items-center gap-1 rounded-md px-2 sm:px-2.5 py-1 text-[11px] font-semibold transition-all ${
+                aria-label={label}
+                aria-current={viewMode === mode ? "page" : undefined}
+                className={`flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors duration-150 sm:min-h-0 sm:min-w-0 sm:px-2.5 ${
                   viewMode === mode
-                    ? "bg-white text-purple-700 shadow-sm"
-                    : "text-purple-400 hover:text-purple-600"
+                    ? "bg-[var(--ui-brand-soft)] text-[var(--ui-brand)]"
+                    : "text-[var(--ui-muted)] hover:bg-white hover:text-[var(--ui-text)]"
                 }`}
               >
                 <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -581,7 +646,7 @@ export default function App() {
 
           {viewMode === "table" && (
             <>
-              <div className="hidden sm:block h-6 w-px bg-purple-100 shrink-0" />
+              <div className="hidden sm:block h-6 w-px bg-[var(--ui-border)] shrink-0" />
               <div className="hidden sm:flex flex-1 min-w-0 overflow-x-auto scrollbar-hide">
                 <TeamFilterBar activeMember={filterMember} onSelect={setFilterMember} members={teamMembers} />
               </div>
@@ -598,7 +663,7 @@ export default function App() {
             )}
             {isAdmin && <button
               onClick={() => setShowTeamManager(true)}
-              className="flex items-center gap-1 rounded-lg border border-purple-200/60 bg-purple-50/50 px-2 py-1 text-[10px] font-semibold text-purple-400 transition hover:bg-purple-100 hover:text-purple-600 active:scale-95"
+              className="ui-button ui-button-secondary flex min-h-0 items-center gap-1 px-2 py-1 text-[10px] font-semibold"
               title={saveStatus["teamMembers:all"] === "saving" ? "กำลังบันทึก..." : "จัดการทีม"}
             >
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -638,7 +703,7 @@ export default function App() {
                 Retry
               </button>
             )}
-            <button onClick={() => setSharedError(null)} className="text-xs text-amber-500 hover:text-amber-700">✕</button>
+            <button onClick={() => setSharedError(null)} aria-label="ปิดข้อความแจ้งเตือน" className="-my-2 -mr-2 flex min-h-11 min-w-11 items-center justify-center text-xs text-amber-500 hover:text-amber-700">✕</button>
           </div>
         )}
 
@@ -646,10 +711,12 @@ export default function App() {
         {isAdmin && <TeamManager
           members={teamMembers}
           onUpdate={updateTeamMembers}
+          onUploadAvatar={updateTeamAvatar}
+          onRemoveAvatar={removeTeamAvatar}
           open={showTeamManager}
           onClose={() => setShowTeamManager(false)}
         />}
-        <AdminSettings open={showAdminSettings} onClose={() => setShowAdminSettings(false)} currentEmail={user?.email} members={teamMembers} configured={isSupabaseConfigured} />
+        <AdminSettings open={showAdminSettings} onClose={() => setShowAdminSettings(false)} currentEmail={user?.email} members={teamMembers} configured={isSupabaseConfigured} dataSources={{ sheets, inputUrl, setInputUrl, addSheet, removeSheet, syncData, isSyncing, lastSynced, syncError }} />
 
         {lastSynced && now - lastSynced.getTime() > 24 * 60 * 60 * 1000 && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
@@ -657,7 +724,7 @@ export default function App() {
           </div>
         )}
 
-        <div key={viewMode} className="animate-magic-view">
+        <div key={viewMode}>
         {viewMode === "my" ? (
           <MyWorkView tasks={myTasks} memberName={myMemberName} workflow={workflow} preferenceOwner={user?.email || "local"} tableProps={{ ...tableProps, clientStats: displayClientStats }} />
         ) : viewMode === "table" ? (
@@ -680,6 +747,14 @@ export default function App() {
               {...tableProps}
             />
 
+            <TaskTable
+              title="Unscheduled"
+              badge="bg-slate-400"
+              tasks={displayUnscheduled}
+              isLoading={isSyncing}
+              {...tableProps}
+            />
+
             {/* ── Completed Clients (100% done) ────────────────────────────── */}
             <CompletedClients
               allTasks={displayAllTasks}
@@ -688,12 +763,12 @@ export default function App() {
               onUpdateAssignment={updateAssignment}
               brandNameForTask={brandNameForTask}
               assignmentKeyForTask={assignmentKeyForTask}
-              canManageAssignments
+              canManageAssignments={canManageAssignments}
             />
           </>
         ) : (
           /* ── Dashboard View ───────────────────────────────────────────────── */
-          <Suspense fallback={<div className="rounded-2xl border border-purple-100 bg-white p-10 text-center text-sm text-purple-400">Loading management overview…</div>}><DashboardView
+          <Suspense fallback={<div className="ui-card rounded-2xl p-10 text-center text-sm text-[var(--ui-muted)]">Loading management overview…</div>}><DashboardView
             allTasks={rawAllTasks}
             assignments={assignments}
             onUpdateAssignment={updateAssignment}
@@ -709,120 +784,13 @@ export default function App() {
             syncStatus={syncStatus}
             lastSynced={lastSynced}
             canAdmin={isAdmin}
+            canManageAssignments={canManageAssignments}
             preferenceOwner={user?.email || "local"}
+            onOpenTask={openTask}
           /></Suspense>
         )}
         </div>
 
-        {/* ── Connected Data Sources (bottom) ─────────────────────────────────── */}
-        <div className="mt-4 rounded-2xl border border-purple-100 bg-white p-6 shadow-sm">
-
-          {/* Card Header */}
-          <div className="mb-5 flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-base font-semibold text-purple-900">
-                Connected Data Sources
-              </h2>
-              <p className="mt-0.5 text-xs text-purple-300">
-                Google Sheets source of truth {isAdmin ? "— Admin can add or remove sources" : "— managed by Admin"}
-              </p>
-              {sheets.length > 0 && (
-                <button
-                  onClick={copyShareLink}
-                  className="mt-2 flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-medium text-purple-600 transition hover:bg-purple-100 active:scale-95"
-                >
-                  {copied ? (
-                    <><svg className="h-3.5 w-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg><span className="text-green-600">Copied!</span></>
-                  ) : (
-                    <><svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>Copy share link</>
-                  )}
-                </button>
-              )}
-            </div>
-
-            {/* Sync Button */}
-            <div className="flex shrink-0 flex-col items-end gap-1">
-              <button
-                onClick={() => syncData(true)}
-                disabled={isSyncing || sheets.length === 0}
-                title={sheets.length === 0 ? "Add at least one sheet to sync" : "Sync all sheets"}
-                className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition-all
-                  ${isSyncing
-                    ? "cursor-not-allowed bg-purple-400"
-                    : sheets.length === 0
-                      ? "cursor-not-allowed bg-gray-200 text-gray-400"
-                      : "bg-purple-600 hover:bg-purple-700 active:scale-95"
-                  }`}
-              >
-                {isSyncing ? (
-                  <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />Syncing…</>
-                ) : (
-                  <><IconSync className="h-4 w-4" />Sync Data</>
-                )}
-              </button>
-              {lastSynced && !isSyncing && (
-                <span className="text-xs text-purple-300">
-                  Last synced: {lastSynced.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Error Banner */}
-          {syncError && (
-            <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-              <IconWarning className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-              <div>
-                <p className="text-sm font-medium text-red-700">Sync failed</p>
-                <p className="mt-0.5 text-xs text-red-500">{syncError}</p>
-              </div>
-              <button onClick={() => setSyncError(null)} className="ml-auto shrink-0 text-xs text-red-400 hover:text-red-600">✕</button>
-            </div>
-          )}
-
-          {/* URL Input */}
-          {isAdmin && <div className="flex gap-2">
-            <input
-              type="url"
-              value={inputUrl}
-              onChange={(e) => setInputUrl(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="https://docs.google.com/spreadsheets/d/..."
-              className="min-w-0 flex-1 rounded-xl border border-purple-100 px-4 py-2.5 text-sm text-gray-700 placeholder-purple-200 outline-none transition focus:border-purple-400 focus:ring-2 focus:ring-purple-100"
-            />
-            <button
-              onClick={addSheet}
-              className="shrink-0 rounded-xl bg-purple-800 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-purple-900 active:scale-95"
-            >
-              Add Sheet
-            </button>
-          </div>}
-
-          {/* Sheet List */}
-          <div className="mt-4">
-            {sheets.length === 0 ? (
-              <p className="py-4 text-center text-xs text-purple-200">No sheets connected yet</p>
-            ) : (
-              <ul className="space-y-2">
-                {sheets.map((sheet) => (
-                  <li key={sheet.spreadsheetId} className="flex items-center justify-between gap-3 rounded-xl border border-purple-100 bg-purple-50/50 px-4 py-2.5">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <IconCheck className="h-4 w-4 shrink-0 text-purple-400" />
-                      <span className="truncate text-sm text-gray-600">{sheet.url}</span>
-                    </div>
-                    {isAdmin && <button
-                      onClick={() => removeSheet(sheet.spreadsheetId)}
-                      className="ml-2 shrink-0 rounded-lg p-1 text-purple-300 transition-colors hover:bg-red-50 hover:text-red-500"
-                      title="Remove"
-                    >
-                      <IconTrash className="h-4 w-4" />
-                    </button>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
       </main>
       {selectedTaskKey && <TaskPanel
         key={selectedTaskKey}
@@ -830,11 +798,15 @@ export default function App() {
         task={selectedTask}
         brandName={selectedTask ? brandNameForTask(selectedTask) : ""}
         note={remarks[selectedTaskKey] || ""}
+        noteVersion={noteVersions[selectedTaskKey] || 0}
+        noteConflict={noteConflicts[selectedTaskKey] || null}
         priority={priorities[selectedTaskKey] || ""}
         workflow={workflow[selectedTaskKey] || "not_started"}
         saveStatus={saveStatus}
         configured={isSupabaseConfigured}
+        editable={selectedTask ? canEditTask(selectedTask) : false}
         onUpdateNote={updateRemark}
+        onDiscardNoteConflict={discardRemarkConflict}
         onUpdatePriority={updatePriority}
         onUpdateWorkflow={updateWorkflow}
         onToggleDone={toggleTask}

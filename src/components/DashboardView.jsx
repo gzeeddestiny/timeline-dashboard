@@ -1,15 +1,22 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react"
-import { ROLE_CONFIG, ROLES, matchMembers } from "../lib/teamConfig"
+import { ROLE_CONFIG, ROLES, taskOwnerNames } from "../lib/teamConfig"
 import { extractBrandName } from "../lib/sheetsApi"
 import { filterDashboardTasks } from "../lib/dashboardFilters"
 import { normalizeBrandKey, tabKey, taskKey } from "../lib/sharedState"
-import { daysFrom } from "../lib/dates"
+import { bangkokDate, daysFrom } from "../lib/dates"
+import { sortMonthLabels } from "../lib/workViews"
 import AssignTeam from "./AssignTeam"
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
+let cachedToday = ""
+let cachedTodayAt = 0
 function daysFromToday(dueDate) {
-  return daysFrom(dueDate)
+  if (!cachedToday || Date.now() - cachedTodayAt > 60_000) {
+    cachedToday = bangkokDate()
+    cachedTodayAt = Date.now()
+  }
+  return daysFrom(dueDate, cachedToday)
 }
 
 function fmtDate(iso) {
@@ -46,13 +53,12 @@ function trendCount(metrics, status) {
 
 // ─── Sub-components ─────────────────────────────────────────────────────────────
 
-function StatCard({ icon, label, value, sub, color, animDelay = 0, glowClass = "", onClick }) {
+function StatCard({ icon, label, value, sub, color, onClick }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-2xl border text-left ${color.border} ${color.bg} p-5 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter ${glowClass}`}
-      style={{ animationDelay: `${animDelay}ms` }}
+      className={`ui-card ui-interactive rounded-2xl text-left ${color.border} ${color.bg} p-5`}
     >
       <div className="flex items-center gap-3">
         <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${color.iconBg}`}>
@@ -72,7 +78,7 @@ function CompletionRing({ pct }) {
   const roundedPct = Math.round(pct)
   return (
     <div
-      className="flex h-11 w-11 items-center justify-center rounded-full animate-magic-scale"
+      className="flex h-11 w-11 items-center justify-center rounded-full"
       style={{
         background: `conic-gradient(${progressColor(roundedPct)} ${roundedPct * 3.6}deg, #f3e8ff ${roundedPct * 3.6}deg)`,
       }}
@@ -132,6 +138,17 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
   const [editValue, setEditValue] = useState("")
   const [newConfirmName, setNewConfirmName] = useState({})
   const [expandedBrand, setExpandedBrand] = useState(null)
+  const closeRef = useRef(null)
+
+  useEffect(() => {
+    const previousFocus = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    closeRef.current?.focus()
+    const keydown = (event) => { if (event.key === "Escape") onClose() }
+    document.addEventListener("keydown", keydown)
+    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", keydown); previousFocus?.focus?.() }
+  }, [onClose])
 
   const existingBrands = Object.keys(confirmed)
 
@@ -155,15 +172,15 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <div className="relative w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl border border-purple-200 bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="ui-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/35" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="brand-manager-title" className="ui-popover ui-panel-enter relative w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-purple-100 bg-white px-5 py-4 rounded-t-2xl">
           <div>
-            <h2 className="text-base font-bold text-purple-900">จัดการรายชื่อลูกค้า</h2>
+            <h2 id="brand-manager-title" className="text-base font-bold text-purple-900">จัดการรายชื่อลูกค้า</h2>
             <p className="text-[11px] text-purple-300">ยืนยัน แก้ชื่อ รวม หรือลบแบรนด์</p>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-purple-300 transition hover:bg-purple-50 hover:text-purple-600">
+          <button ref={closeRef} type="button" onClick={onClose} aria-label="ปิดหน้าจัดการแบรนด์" className="rounded-lg p-1.5 text-purple-300 transition hover:bg-purple-50 hover:text-purple-600">
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -244,8 +261,8 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
                           className="flex-1 rounded-md border border-purple-300 px-2 py-0.5 text-sm font-semibold text-gray-800 outline-none focus:ring-1 focus:ring-purple-400"
                         />
                       ) : (
-                        <span
-                          className="flex-1 text-sm font-semibold text-gray-800 cursor-pointer hover:text-purple-600 truncate"
+                        <button type="button"
+                          className="flex-1 truncate text-left text-sm font-semibold text-gray-800 hover:text-purple-600"
                           onClick={() => startEdit(brand)}
                           title="คลิกเพื่อแก้ชื่อ"
                         >
@@ -253,7 +270,7 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
                           <svg className="inline-block ml-1 h-2.5 w-2.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                           </svg>
-                        </span>
+                        </button>
                       )}
                       {/* Tab count — click to expand */}
                       <button
@@ -296,16 +313,16 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
   )
 }
 
-function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, overdueCount, nextTask, assignments, teamMembers, onUpdateAssignment, onRename, onOpen, animDelay = 0 }) {
+function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, overdueCount, nextTask, assignments, teamMembers, onUpdateAssignment, onRename, onOpen, canManageAssignments }) {
   const pct = stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0
   const barWidth = stats.total > 0 ? (stats.done / stats.total) * 100 : 0
 
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 transition-all duration-300 hover:shadow-sm hover:border-purple-200 hover:-translate-y-0.5 animate-magic-enter" style={{ animationDelay: `${animDelay}ms` }}>
+    <div className="ui-card ui-interactive flex flex-col items-stretch gap-3 rounded-xl px-4 py-3 md:flex-row md:items-center">
       {/* Client name — editable */}
-      <div className="w-56 shrink-0">
+      <div className="w-full shrink-0 md:w-56">
         <EditableClientName name={name} rawTabNames={rawTabNames} onRename={onRename} />
-        <button type="button" onClick={onOpen} className="mt-1 text-[9px] font-semibold text-purple-400 hover:text-purple-600">ดูงานทั้งหมด</button>
+        <button type="button" onClick={onOpen} className="mt-1 min-h-11 text-[9px] font-semibold text-purple-700 hover:text-purple-900 md:min-h-0">ดูงานทั้งหมด</button>
       </div>
 
       {/* Progress bar */}
@@ -313,7 +330,7 @@ function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, o
         <div className="flex items-center gap-2">
           <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
             <div
-              className="h-full rounded-full transition-all duration-500"
+              className="h-full rounded-full transition-[width] duration-150"
               style={{ width: `${barWidth}%`, backgroundColor: progressColor(pct) }}
             />
           </div>
@@ -327,7 +344,7 @@ function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, o
       </div>
 
       {/* Overdue badge */}
-      <div className="w-16 text-center">
+      <div className="flex w-full items-center justify-between text-center md:block md:w-16"><span className="text-[9px] font-bold uppercase text-gray-300 md:hidden">Overdue</span>
         {overdueCount > 0 ? (
           <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-600">
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -341,7 +358,7 @@ function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, o
       </div>
 
       {/* Next deadline */}
-      <div className="w-24 text-center">
+      <div className="flex w-full items-center justify-between text-center md:block md:w-24"><span className="text-[9px] font-bold uppercase text-gray-300 md:hidden">Next due</span>
         {nextTask ? (
           <span className="text-[11px] text-gray-500">
             {fmtDate(nextTask.dueDate)}
@@ -355,8 +372,8 @@ function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, o
       </div>
 
       {/* Team */}
-      <div className="w-28 flex justify-end">
-        <AssignTeam
+      <div className="flex w-full items-center justify-between md:w-28 md:justify-end"><span className="text-[9px] font-bold uppercase text-gray-300 md:hidden">Team</span>
+        {canManageAssignments && <AssignTeam
           displayName={name}
           assignmentKey={assignmentKey}
           legacyKey={legacyKey}
@@ -364,13 +381,13 @@ function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, o
           members={teamMembers}
           onUpdate={onUpdateAssignment}
           compact
-        />
+        />}
       </div>
     </div>
   )
 }
 
-function MemberCard({ member, stats, maxOverdue, onOpen, animDelay = 0 }) {
+function MemberCard({ member, stats, maxOverdue, onOpen }) {
   const rc = ROLE_CONFIG[member.role]
   const total = stats.done + stats.pending + stats.overdue
   const isHighOverdue = stats.overdue > 0 && stats.overdue >= maxOverdue
@@ -378,10 +395,9 @@ function MemberCard({ member, stats, maxOverdue, onOpen, animDelay = 0 }) {
   return (
     <button type="button"
       onClick={onOpen}
-      className={`rounded-2xl border bg-white p-4 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter ${
-        isHighOverdue ? "border-red-200 animate-overdue-glow" : "border-gray-100"
+      className={`ui-card ui-interactive rounded-2xl p-4 ${
+        isHighOverdue ? "border-red-200" : "border-gray-100"
       } text-left`}
-      style={{ animationDelay: `${animDelay}ms` }}
     >
       <div className="flex items-center gap-3 mb-3">
         {/* Avatar */}
@@ -413,19 +429,19 @@ function MemberCard({ member, stats, maxOverdue, onOpen, animDelay = 0 }) {
           <div className="flex h-2.5 rounded-full overflow-hidden bg-gray-100">
             {stats.done > 0 && (
               <div
-                className="bg-green-400 transition-all duration-500"
+                className="bg-green-400 transition-[width] duration-150"
                 style={{ width: `${(stats.done / total) * 100}%` }}
               />
             )}
             {stats.pending > 0 && (
               <div
-                className="bg-purple-300 transition-all duration-500"
+                className="bg-blue-300 transition-[width] duration-150"
                 style={{ width: `${(stats.pending / total) * 100}%` }}
               />
             )}
             {stats.overdue > 0 && (
               <div
-                className="bg-red-400 transition-all duration-500"
+                className="bg-red-400 transition-[width] duration-150"
                 style={{ width: `${(stats.overdue / total) * 100}%` }}
               />
             )}
@@ -453,13 +469,13 @@ function MemberCard({ member, stats, maxOverdue, onOpen, animDelay = 0 }) {
   )
 }
 
-function OverdueItem({ task, brandName, animDelay = 0 }) {
+function OverdueItem({ task, brandName }) {
   const days = daysFromToday(task.dueDate)
   const absDays = Math.abs(days ?? 0)
   const { cls, label } = overdueConfig(absDays)
 
   return (
-    <a href={`https://docs.google.com/spreadsheets/d/${task.spreadsheetId}/edit#gid=${task.sheetGid}`} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 rounded-lg px-3 py-2 transition hover:bg-red-50/50 animate-magic-enter" style={{ animationDelay: `${animDelay}ms` }}>
+    <a href={`https://docs.google.com/spreadsheets/d/${task.spreadsheetId}/edit#gid=${task.sheetGid}`} target="_blank" rel="noreferrer" className="ui-interactive flex items-center gap-2.5 rounded-lg px-3 py-2">
       {/* Severity */}
       <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${cls}`}>
         {absDays}d late <span className="text-[8px] uppercase opacity-70">{label}</span>
@@ -508,33 +524,31 @@ function UpcomingDayGroup({ dateKey, tasks, brandNameForTask }) {
   )
 }
 
-// ─── Gantt Timeline ──────────────────────────────────────────────────────────────
+// ─── Deadline Roadmap ───────────────────────────────────────────────────────────
 
-const GANTT_COLORS = [
-  { bg: "rgb(147,51,234)", light: "rgb(233,213,255)" },   // purple
-  { bg: "rgb(59,130,246)", light: "rgb(191,219,254)" },   // blue
-  { bg: "rgb(20,184,166)", light: "rgb(153,246,228)" },   // teal
-  { bg: "rgb(245,158,11)", light: "rgb(253,230,138)" },   // amber
-  { bg: "rgb(244,63,94)",  light: "rgb(254,205,211)" },   // rose
-  { bg: "rgb(99,102,241)", light: "rgb(199,210,254)" },   // indigo
-  { bg: "rgb(34,197,94)",  light: "rgb(187,247,208)" },   // green
-  { bg: "rgb(236,72,153)", light: "rgb(251,207,232)" },   // pink
-]
-
-function ganttColor(i) { return GANTT_COLORS[i % GANTT_COLORS.length] }
+function milestoneColor(task) {
+  if (task.done) return "#15803d"
+  if (task.workflowStatus === "blocked") return "#9f1239"
+  if (task.workflowStatus === "waiting_client") return "#b54708"
+  if (daysFromToday(task.dueDate) < 0) return "#b42318"
+  if (task.workflowStatus === "in_progress") return "#1d4ed8"
+  return "#480174"
+}
 
 const ZOOM_LEVELS = [
-  { label: "1M", days: 30 },
-  { label: "3M", days: 90 },
+  { label: "4W", days: 28, past: 7 },
+  { label: "12W", days: 84, past: 14 },
   { label: "6M", days: 180 },
   { label: "All", days: 0 },
 ]
 
-function GanttTimeline({ allTasks, brandNameForTask }) {
+function DeadlineRoadmap({ allTasks, brandNameForTask, assignedNames, onOpenTask, preferenceOwner }) {
   const scrollRef = useRef(null)
   const containerRef = useRef(null)
-  const [tooltip, setTooltip] = useState(null)
   const [zoomIdx, setZoomIdx] = useState(1) // default 3M
+  const [roadmapNow] = useState(Date.now)
+  const [windowOffset, setWindowOffset] = useState(0)
+  const [groupMode, setGroupMode] = useState(() => localStorage.getItem(`magic-roadmap-group:${preferenceOwner}`) || "brand")
   const [containerWidth, setContainerWidth] = useState(800)
   const [isDragging, setIsDragging] = useState(false)
   const dragState = useRef({ startX: 0, scrollLeft: 0 })
@@ -549,20 +563,16 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
     return () => ro.disconnect()
   }, [])
 
+  useEffect(() => { localStorage.setItem(`magic-roadmap-group:${preferenceOwner}`, groupMode) }, [groupMode, preferenceOwner])
+
   const tasks = useMemo(() => {
-    return allTasks.filter((t) => t.dueDate && !isNaN(new Date(t.dueDate).getTime()))
-  }, [allTasks])
+    const cutoff = roadmapNow - 30 * 86_400_000
+    return allTasks.filter((task) => task.dueDate && !isNaN(new Date(task.dueDate).getTime()) && (!task.done || new Date(task.actualSubmit || task.dueDate).getTime() >= cutoff))
+  }, [allTasks, roadmapNow])
 
   // Group by client + compute layout
   const { clients, markers, dateRange, dayWidth, totalWidth } = useMemo(() => {
     if (tasks.length === 0) return { clients: [], markers: [], dateRange: null, dayWidth: 0, totalWidth: 0 }
-
-    const groups = {}
-    tasks.forEach((t) => {
-      const brandName = brandNameForTask(t)
-      if (!groups[brandName]) groups[brandName] = []
-      groups[brandName].push(t)
-    })
 
     // Find global date range from data
     const allDates = tasks.map((t) => new Date(t.dueDate))
@@ -578,19 +588,28 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
       maxDate = new Date(dataMax); maxDate.setDate(maxDate.getDate() + 7)
     } else {
       // Fixed window centered on today
-      const today = new Date(); today.setHours(0, 0, 0, 0)
-      const halfDays = Math.floor(zoom.days / 2)
-      minDate = new Date(today); minDate.setDate(minDate.getDate() - Math.floor(halfDays * 0.4))
-      maxDate = new Date(today); maxDate.setDate(maxDate.getDate() + Math.ceil(halfDays * 1.6))
-      // Extend to cover data if needed
-      if (dataMin < minDate) minDate = new Date(dataMin.getTime() - 7 * 86_400_000)
-      if (dataMax > maxDate) maxDate = new Date(dataMax.getTime() + 7 * 86_400_000)
+      const today = new Date(); today.setHours(0, 0, 0, 0); today.setDate(today.getDate() + windowOffset)
+      const pastDays = zoom.past ?? Math.floor(zoom.days / 6)
+      minDate = new Date(today); minDate.setDate(minDate.getDate() - pastDays)
+      maxDate = new Date(minDate); maxDate.setDate(maxDate.getDate() + zoom.days)
     }
 
     minDate.setHours(0, 0, 0, 0)
     maxDate.setHours(0, 0, 0, 0)
 
-    const totalDays = Math.ceil((maxDate - minDate) / 86_400_000)
+    const groups = {}
+    tasks.filter((task) => {
+      const due = new Date(task.dueDate)
+      return due >= minDate && due <= maxDate
+    }).forEach((task) => {
+      const names = groupMode === "person" ? assignedNames(task) : [brandNameForTask(task)]
+      ;(names.length ? names : ["Unassigned"]).forEach((name) => {
+        if (!groups[name]) groups[name] = []
+        groups[name].push(task)
+      })
+    })
+
+    const totalDays = Math.max(1, Math.ceil((maxDate - minDate) / 86_400_000))
     const LABEL_W = 140
     const availableWidth = containerWidth - LABEL_W
 
@@ -629,7 +648,7 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
       const weekCursor = new Date(minDate)
       // Align to Monday
       const dow = weekCursor.getDay()
-      weekCursor.setDate(weekCursor.getDate() + (dow === 0 ? 1 : 8 - dow))
+      weekCursor.setDate(weekCursor.getDate() + (dow === 1 ? 0 : dow === 0 ? 1 : 8 - dow))
       while (weekCursor <= maxDate) {
         const dayOff = (weekCursor - minDate) / 86_400_000
         mkrs.push({
@@ -644,19 +663,17 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
 
     // Build client rows
     const clientList = Object.entries(groups)
-      .map(([name, clientTasks], idx) => {
+      .map(([name, clientTasks]) => {
         clientTasks.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
         const earliest = new Date(clientTasks[0].dueDate)
-        const latest = new Date(clientTasks[clientTasks.length - 1].dueDate)
         const startOffset = (earliest - minDate) / 86_400_000
-        const endOffset = (latest - minDate) / 86_400_000
         const done = clientTasks.filter((t) => t.done).length
         const total = clientTasks.length
         const maxDaysLate = Math.max(...clientTasks.filter((task) => !task.done).map((task) => Math.max(0, -daysFromToday(task.dueDate))), 0)
 
         return {
           name, tasks: clientTasks,
-          startOffset, endOffset, colorIdx: idx,
+          startOffset,
           done, total, maxDaysLate,
           pct: total > 0 ? Math.round((done / total) * 100) : 0,
         }
@@ -670,7 +687,7 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
       dayWidth: dw,
       totalWidth: tw,
     }
-  }, [tasks, zoomIdx, containerWidth, brandNameForTask])
+  }, [tasks, zoomIdx, windowOffset, containerWidth, brandNameForTask, assignedNames, groupMode])
 
   // Today marker position
   const todayOffset = useMemo(() => {
@@ -729,14 +746,18 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
             onClick={() => setZoomIdx(i)}
             className={`rounded-md px-2.5 py-1 text-[10px] font-bold transition ${
               zoomIdx === i
-                ? "bg-purple-600 text-white shadow-sm"
+                ? "bg-[var(--ui-brand)] text-white"
                 : "bg-gray-100 text-gray-400 hover:bg-purple-50 hover:text-purple-500"
             }`}
           >
             {z.label}
           </button>
         ))}
+        <button type="button" onClick={() => setWindowOffset((value) => value - (ZOOM_LEVELS[zoomIdx].days || 30))} className="rounded-md border border-gray-200 px-2 py-1 text-[10px] font-bold text-gray-500" aria-label="Previous period">←</button>
+        <button type="button" onClick={() => setWindowOffset(0)} className="rounded-md border border-purple-200 px-2 py-1 text-[10px] font-bold text-purple-600">Today</button>
+        <button type="button" onClick={() => setWindowOffset((value) => value + (ZOOM_LEVELS[zoomIdx].days || 30))} className="rounded-md border border-gray-200 px-2 py-1 text-[10px] font-bold text-gray-500" aria-label="Next period">→</button>
         <div className="flex-1" />
+        <div className="flex rounded-lg bg-gray-100 p-0.5">{[["brand", "Brand"], ["person", "Person"]].map(([value, label]) => <button type="button" key={value} onClick={() => setGroupMode(value)} className={`rounded-md px-2 py-1 text-[9px] font-bold ${groupMode === value ? "bg-[var(--ui-brand-soft)] text-[var(--ui-brand)]" : "text-gray-400"}`}>{label}</button>)}</div>
         <span className="text-[9px] text-gray-400">← เลื่อน / ลากเพื่อดูช่วงอื่น →</span>
       </div>
 
@@ -744,20 +765,19 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
         {/* Fixed left labels */}
         <div className="shrink-0 bg-gray-50/80 border-r border-gray-100 z-10" style={{ width: LABEL_WIDTH }}>
           <div className="h-8 border-b border-gray-100 px-2 flex items-center">
-            <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Client</span>
+            <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400">{groupMode === "person" ? "Person" : "Brand"}</span>
           </div>
           {weekMarkers.length > 0 && (
             <div className="h-5 border-b border-gray-50" />
           )}
           {clients.map((c) => {
-            const color = ganttColor(c.colorIdx)
             return (
               <div
                 key={c.name}
                 className="flex items-center gap-1.5 px-2 border-b border-gray-50 hover:bg-purple-50/50 transition"
                 style={{ height: ROW_HEIGHT }}
               >
-                <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: color.bg }} />
+                <span className="h-2.5 w-2.5 rounded-sm shrink-0 bg-slate-300" />
                 <span className="text-[10px] font-medium text-gray-700 truncate flex-1" title={c.name}>{c.name}</span>
                 <span className="text-[8px] text-gray-400 tabular-nums shrink-0">{c.pct}%</span>
               </div>
@@ -770,6 +790,14 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
           ref={scrollRef}
           className={`flex-1 overflow-x-auto overflow-y-hidden ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
           onMouseDown={handleMouseDown}
+          tabIndex={0}
+          aria-label="Deadline roadmap. Use left and right arrow keys to move through time."
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              event.preventDefault()
+              event.currentTarget.scrollBy({ left: event.key === "ArrowLeft" ? -240 : 240, behavior: "smooth" })
+            }
+          }}
           style={{ scrollBehavior: isDragging ? "auto" : "smooth" }}
         >
           <div className="relative select-none" style={{ width: totalWidth, minWidth: "100%" }}>
@@ -803,11 +831,6 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
 
             {/* Task rows */}
             {clients.map((c) => {
-              const color = ganttColor(c.colorIdx)
-              const barLeft = c.startOffset * dayWidth
-              const barWidth = Math.max((c.endOffset - c.startOffset) * dayWidth, 6)
-              const doneWidth = c.total > 0 ? (c.done / c.total) * barWidth : 0
-
               return (
                 <div key={c.name} className="relative border-b border-gray-50" style={{ height: ROW_HEIGHT }}>
                   {/* Grid lines */}
@@ -818,47 +841,20 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
                     <div key={`wl-${w.date.getTime()}`} className="absolute top-0 h-full border-l border-gray-50" style={{ left: w.left }} />
                   ))}
 
-                  {/* Bar */}
-                  <div
-                    className="absolute top-1.5 rounded-md cursor-pointer transition-opacity hover:opacity-90"
-                    style={{ left: barLeft, width: barWidth, height: ROW_HEIGHT - 12, backgroundColor: color.light }}
-                    onMouseEnter={(e) => setTooltip({ name: c.name, done: c.done, total: c.total, pct: c.pct, x: e.clientX, y: e.clientY })}
-                    onMouseLeave={() => setTooltip(null)}
-                  >
-                    {doneWidth > 0 && (
-                      <div className="h-full rounded-md" style={{ width: doneWidth, backgroundColor: color.bg, opacity: 0.85 }} />
-                    )}
-                    {barWidth > 60 && (
-                      <span
-                        className="absolute inset-0 flex items-center pointer-events-none"
-                        style={{ paddingLeft: Math.min(doneWidth + 4, barWidth - 20) > 20 ? 0 : undefined }}
-                      >
-                        <span
-                          className="rounded px-1.5 py-px text-[9px] font-bold truncate"
-                          style={{
-                            backgroundColor: "rgba(255,255,255,0.85)",
-                            color: color.bg,
-                            marginLeft: 4,
-                          }}
-                        >
-                          {c.name}
-                        </span>
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Task dots */}
+                  {/* Due-date milestones. No start date exists in the source, so no duration bar is shown. */}
                   {c.tasks.map((t, ti) => {
                     const taskOffset = ((new Date(t.dueDate) - dateRange.min) / 86_400_000) * dayWidth
                     const dotSize = dayWidth >= 4 ? 10 : 8
                     return (
-                      <div
+                      <button
+                        type="button"
                         key={taskKey(t) || ti}
-                        className="absolute top-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-sm"
+                        onClick={(event) => { event.stopPropagation(); onOpenTask?.(t) }}
+                        className="absolute top-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1"
                         style={{
                           left: taskOffset - dotSize / 2,
                           width: dotSize, height: dotSize,
-                          backgroundColor: t.done ? color.bg : (daysFromToday(t.dueDate) < 0 ? "#ef4444" : color.light),
+                          backgroundColor: milestoneColor(t),
                         }}
                         title={`${t.topic} — ${t.done ? "Done" : "Pending"} (${new Date(t.dueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })})`}
                       />
@@ -882,16 +878,6 @@ function GanttTimeline({ allTasks, brandNameForTask }) {
           </div>
         </div>
 
-        {/* Tooltip */}
-        {tooltip && (
-          <div
-            className="fixed z-50 rounded-lg bg-gray-900 px-3 py-2 text-white shadow-xl pointer-events-none"
-            style={{ left: tooltip.x + 12, top: tooltip.y - 10 }}
-          >
-            <div className="text-xs font-bold">{tooltip.name}</div>
-            <div className="text-[10px] text-gray-300 mt-0.5">{tooltip.done}/{tooltip.total} tasks done ({tooltip.pct}%)</div>
-          </div>
-        )}
       </div>
     </div>
   )
@@ -916,9 +902,9 @@ function activityDescription(event, task) {
 function RecentActivity({ events, tasks }) {
   const taskMap = new Map(tasks.map((task) => [taskKey(task), task]))
   return (
-    <div className="rounded-2xl border border-purple-100 bg-white p-5 shadow-sm">
+    <div className="ui-card rounded-2xl p-5">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Recent Activity</h3>
+        <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Recent Activity</h3>
         <span className="text-[10px] text-gray-400">who changed what and when</span>
       </div>
       {events.length ? <div className="mt-3 divide-y divide-gray-50">
@@ -955,7 +941,9 @@ export default function DashboardView({
   syncStatus = null,
   lastSynced = null,
   canAdmin = false,
+  canManageAssignments = false,
   preferenceOwner = "local",
+  onOpenTask,
 }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -964,10 +952,15 @@ export default function DashboardView({
   }, [])
   const [showBrandManager, setShowBrandManager] = useState(false)
   const [healthShowAll, setHealthShowAll] = useState(false)
+  const [upcomingLimit, setUpcomingLimit] = useState(50)
   const [drilldown, setDrilldown] = useState(null)
   const filterStorageKey = `magic-dashboard-filters:${preferenceOwner}`
   const [filters, setFilters] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(filterStorageKey)) || { status: "all", month: "all", member: "all" } }
+    try {
+      const saved = JSON.parse(localStorage.getItem(filterStorageKey)) || {}
+      const statuses = new Set(["all", "overdue", "upcoming", "done", "unscheduled", "not_started", "in_progress", "waiting_client", "blocked"])
+      return { status: statuses.has(saved.status) ? saved.status : "all", month: typeof saved.month === "string" ? saved.month : "all", member: typeof saved.member === "string" ? saved.member : "all" }
+    }
     catch { return { status: "all", month: "all", member: "all" } }
   })
   const HEALTH_PREVIEW_COUNT = 5
@@ -1003,18 +996,22 @@ export default function DashboardView({
 
   const assignedNames = useCallback((task) => {
     const assignment = assignments[assignmentKeyForTask(task)] || assignments[task.clientName] || {}
-    const responsibility = matchMembers(task.responsibility).map((member) => member.name)
-    return [...new Set([...Object.values(assignment), ...responsibility])]
-  }, [assignments, assignmentKeyForTask])
+    return taskOwnerNames(task, teamMembers, assignment)
+  }, [assignments, assignmentKeyForTask, teamMembers])
 
   const tasksWithWorkflow = useMemo(() => allTasks.map((task) => ({
     ...task,
     workflowStatus: workflow[taskKey(task)] || "not_started",
   })), [allTasks, workflow])
-  const months = useMemo(() => [...new Set(tasksWithWorkflow.map((task) => task.month).filter(Boolean))].sort(), [tasksWithWorkflow])
+  const months = useMemo(() => sortMonthLabels(new Set(tasksWithWorkflow.map((task) => task.month).filter(Boolean))), [tasksWithWorkflow])
+  const effectiveFilters = useMemo(() => ({
+    ...filters,
+    month: filters.month === "all" || months.includes(filters.month) ? filters.month : "all",
+    member: filters.member === "all" || teamMembers.some((member) => member.name === filters.member) ? filters.member : "all",
+  }), [filters, months, teamMembers])
   const filteredTasks = useMemo(
-    () => filterDashboardTasks(tasksWithWorkflow, filters, assignedNames),
-    [tasksWithWorkflow, filters, assignedNames],
+    () => filterDashboardTasks(tasksWithWorkflow, effectiveFilters, assignedNames),
+    [tasksWithWorkflow, effectiveFilters, assignedNames],
   )
   const overdue = useMemo(() => filteredTasks.filter((task) => !task.done && daysFromToday(task.dueDate) < 0), [filteredTasks])
   const upcoming = useMemo(() => filteredTasks.filter((task) => !task.done && daysFromToday(task.dueDate) >= 0), [filteredTasks])
@@ -1033,12 +1030,12 @@ export default function DashboardView({
     return buckets
   }, [overdue])
   const monthlyTrend = useMemo(() => {
-    const dimension = filters.member !== "all" && filters.month !== "all"
-      ? ["month_person", `${filters.month}:${filters.member}`]
-      : filters.member !== "all"
-        ? ["person", filters.member]
-        : filters.month !== "all"
-          ? ["month", filters.month]
+    const dimension = effectiveFilters.member !== "all" && effectiveFilters.month !== "all"
+      ? ["month_person", `${effectiveFilters.month}:${effectiveFilters.member}`]
+      : effectiveFilters.member !== "all"
+        ? ["person", effectiveFilters.member]
+        : effectiveFilters.month !== "all"
+          ? ["month", effectiveFilters.month]
           : ["overall", "all"]
     const monthly = new Map()
     dailyMetrics.filter((row) => row.dimension === dimension[0] && row.dimension_key === dimension[1]).forEach((row) => {
@@ -1053,7 +1050,7 @@ export default function DashboardView({
       ...value.latest,
       metrics: { ...value.latest.metrics, overdueCreated: value.created, overdueResolved: value.resolved },
     }])
-  }, [dailyMetrics, filters.member, filters.month])
+  }, [dailyMetrics, effectiveFilters.member, effectiveFilters.month])
   const openDrilldown = (label, tasks) => setDrilldown({ label, tasks })
   const agingTasks = (label) => overdue.filter((task) => {
     const days = Math.abs(daysFromToday(task.dueDate))
@@ -1143,24 +1140,24 @@ export default function DashboardView({
   // ── All future work grouped by day ──
   const upcomingByDay = useMemo(() => {
     const grouped = {}
-    upcoming.forEach((t) => {
+    upcoming.slice(0, upcomingLimit).forEach((t) => {
       if (!grouped[t.dueDate]) grouped[t.dueDate] = []
       grouped[t.dueDate].push(t)
     })
     return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b))
-  }, [upcoming])
+  }, [upcoming, upcomingLimit])
 
   return (
     <div className="space-y-6">
 
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-purple-100 bg-white p-4 shadow-sm">
+      <div className="ui-card flex flex-wrap items-center gap-3 rounded-2xl p-4">
         <div className="mr-1">
           <div className="text-[10px] font-bold uppercase tracking-widest text-purple-500">Dashboard Filters</div>
           <div className="text-[10px] text-gray-400">{filteredTasks.length} of {allTasks.length} tasks</div>
         </div>
         <label className="text-[10px] font-semibold text-gray-500">
           Status
-          <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} className="ml-1.5 rounded-lg border border-purple-100 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-purple-400">
+          <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} className="ui-field ml-1.5 min-h-0 px-2.5 py-1.5 text-xs text-gray-700">
             <option value="all">All</option>
             <option value="overdue">Overdue</option>
             <option value="upcoming">Upcoming</option>
@@ -1174,19 +1171,19 @@ export default function DashboardView({
         </label>
         <label className="text-[10px] font-semibold text-gray-500">
           Month
-          <select value={filters.month} onChange={(event) => setFilters((current) => ({ ...current, month: event.target.value }))} className="ml-1.5 rounded-lg border border-purple-100 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-purple-400">
+          <select value={effectiveFilters.month} onChange={(event) => setFilters((current) => ({ ...current, month: event.target.value }))} className="ui-field ml-1.5 min-h-0 px-2.5 py-1.5 text-xs text-gray-700">
             <option value="all">All</option>
             {months.map((month) => <option key={month} value={month}>{month}</option>)}
           </select>
         </label>
         <label className="text-[10px] font-semibold text-gray-500">
           Person
-          <select value={filters.member} onChange={(event) => setFilters((current) => ({ ...current, member: event.target.value }))} className="ml-1.5 rounded-lg border border-purple-100 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:border-purple-400">
+          <select value={effectiveFilters.member} onChange={(event) => setFilters((current) => ({ ...current, member: event.target.value }))} className="ui-field ml-1.5 min-h-0 px-2.5 py-1.5 text-xs text-gray-700">
             <option value="all">All</option>
             {teamMembers.map((member) => <option key={member.name} value={member.name}>{member.name}</option>)}
           </select>
         </label>
-        <button onClick={() => setFilters({ status: "all", month: "all", member: "all" })} disabled={Object.values(filters).every((value) => value === "all")} className="ml-auto rounded-lg border border-purple-200 px-3 py-1.5 text-[10px] font-semibold text-purple-500 transition hover:bg-purple-50 disabled:cursor-not-allowed disabled:opacity-40">
+        <button onClick={() => setFilters({ status: "all", month: "all", member: "all" })} disabled={Object.values(filters).every((value) => value === "all")} className="ui-button ui-button-secondary ml-auto min-h-0 px-3 py-1.5 text-[10px] font-semibold disabled:opacity-40">
           Reset
         </button>
       </div>
@@ -1201,16 +1198,17 @@ export default function DashboardView({
           <strong className="uppercase tracking-wider text-purple-700">Data Health</strong>
           <span>Status: <strong>{syncStatus?.status || "not synced"}</strong></span>
           <span>Source tasks: <strong>{syncStatus?.task_count ?? allTasks.length}</strong></span>
-          <button type="button" onClick={() => openDrilldown("Unscheduled", unscheduled)} className="underline decoration-purple-200 underline-offset-2">Unscheduled: <strong>{unscheduled.length}</strong></button>
+          <button type="button" onClick={() => openDrilldown("Unscheduled", unscheduled)} className="min-h-11 underline decoration-purple-200 underline-offset-2 sm:min-h-0">Unscheduled: <strong>{unscheduled.length}</strong></button>
           <span>Invalid rows: <strong>{syncStatus?.invalid_row_count || 0}</strong></span>
+          <span>Skipped tabs: <strong>{syncStatus?.issues?.filter((issue) => issue.type === "skipped_tab").length || 0}</strong></span>
         </div>
         {syncStatus?.error && <p className="mt-2 text-red-600">{syncStatus.error}</p>}
         {syncStatus?.issues?.length > 0 && <div className="mt-2 max-h-24 overflow-y-auto text-[10px] text-amber-700">{syncStatus.issues.slice(0, 5).map((issue, index) => <div key={`${issue.spreadsheetId}:${issue.sheetGid}:${issue.rowIndex}:${index}`}>{issue.clientName} row {issue.rowIndex}: {issue.message}</div>)}</div>}
       </div>
 
-      {drilldown && <div className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
+      {drilldown && <div className="ui-card rounded-2xl border-purple-200 p-5">
         <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-purple-800">{drilldown.label} · {drilldown.tasks.length} tasks</h3><button onClick={() => setDrilldown(null)} className="text-xs text-gray-400">Close</button></div>
-        <div className="mt-3 max-h-64 divide-y divide-gray-50 overflow-y-auto">{drilldown.tasks.map((task) => <a key={taskKey(task)} href={`https://docs.google.com/spreadsheets/d/${task.spreadsheetId}/edit#gid=${task.sheetGid}`} target="_blank" rel="noreferrer" className="flex gap-3 py-2 text-xs hover:bg-purple-50"><span className="w-28 truncate font-semibold text-purple-600">{brandNameForTask(task)}</span><span className="flex-1 text-gray-600">{task.topic}</span><span className="text-gray-400">{fmtDate(task.dueDate)}</span></a>)}</div>
+        <div className="mt-3 max-h-64 divide-y divide-gray-50 overflow-y-auto">{drilldown.tasks.map((task) => <button type="button" onClick={() => onOpenTask?.(task)} key={taskKey(task)} className="flex w-full gap-3 py-2 text-left text-xs hover:bg-purple-50 focus:outline-none focus:ring-2 focus:ring-purple-300"><span className="w-28 truncate font-semibold text-purple-600">{brandNameForTask(task)}</span><span className="flex-1 text-gray-600">{task.topic}</span><span className="text-gray-400">{fmtDate(task.dueDate)}</span></button>)}</div>
       </div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -1218,9 +1216,7 @@ export default function DashboardView({
           label="Overdue"
           value={overdue.length}
           sub={overdue.length > 0 ? `${overdue.length} tasks past deadline` : "All clear!"}
-          animDelay={0}
           onClick={() => openDrilldown("Overdue", overdue)}
-          glowClass={overdue.length > 0 ? "animate-overdue-glow" : ""}
           color={{
             bg: overdue.length > 0 ? "bg-red-50" : "bg-green-50",
             border: overdue.length > 0 ? "border-red-200" : "border-green-200",
@@ -1238,27 +1234,24 @@ export default function DashboardView({
           label="Blocked"
           value={blocked.length}
           sub="Requires intervention"
-          animDelay={120}
           onClick={() => openDrilldown("Blocked", blocked)}
-          color={{ bg: "bg-red-50", border: "border-red-200", iconBg: "bg-red-100", text: "text-red-700" }}
-          icon={<span className="text-lg font-black text-red-500">!</span>}
+          color={{ bg: "bg-rose-50", border: "border-rose-200", iconBg: "bg-rose-100", text: "text-rose-700" }}
+          icon={<span className="text-lg font-black text-rose-600">!</span>}
         />
 
         <StatCard
           label="Waiting Client"
           value={waitingClient.length}
           sub="Pending external response"
-          animDelay={160}
           onClick={() => openDrilldown("Waiting Client", waitingClient)}
-          color={{ bg: "bg-blue-50", border: "border-blue-200", iconBg: "bg-blue-100", text: "text-blue-700" }}
-          icon={<span className="text-lg font-black text-blue-500">…</span>}
+          color={{ bg: "bg-amber-50", border: "border-amber-200", iconBg: "bg-amber-100", text: "text-amber-700" }}
+          icon={<span className="text-lg font-black text-amber-600">…</span>}
         />
 
         <StatCard
           label="Due This Week"
           value={metrics.dueThisWeek.length}
           sub="Next 7 days"
-          animDelay={80}
           onClick={() => openDrilldown("Due This Week", metrics.dueThisWeek)}
           color={{
             bg: "bg-amber-50", border: "border-amber-200",
@@ -1271,7 +1264,7 @@ export default function DashboardView({
           }
         />
 
-        <button type="button" onClick={() => openDrilldown("Completed", filteredTasks.filter((task) => task.done))} className="rounded-2xl border border-purple-200 bg-purple-50 p-5 text-left transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter" style={{ animationDelay: "160ms" }}>
+        <button type="button" onClick={() => openDrilldown("Completed", filteredTasks.filter((task) => task.done))} className="ui-card ui-interactive rounded-2xl border-green-200 bg-green-50 p-5 text-left">
           <div className="flex items-center gap-3">
             <CompletionRing pct={metrics.completionPct} />
             <div>
@@ -1282,7 +1275,7 @@ export default function DashboardView({
           <div className="mt-2 text-[11px] text-gray-500">{metrics.totalDone} of {metrics.totalAll} tasks done</div>
         </button>
 
-        <div className="rounded-2xl border border-purple-100 bg-purple-50/50 p-5 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 animate-magic-enter" style={{ animationDelay: "240ms" }}>
+        <div className="ui-card rounded-2xl p-5">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100">
               <svg className="h-5 w-5 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1314,7 +1307,7 @@ export default function DashboardView({
           <button
             type="button"
             onClick={() => openDrilldown("Active Clients", filteredTasks.filter((task) => metrics.activeClientNames.includes(brandNameForTask(task))))}
-            className="mt-2 mr-1 rounded-lg border border-purple-200 bg-white px-2 py-1 text-[10px] font-semibold text-purple-500 transition hover:bg-purple-50"
+            className="mt-2 mr-1 min-h-11 rounded-lg border border-purple-200 bg-white px-2 py-1 text-[10px] font-semibold text-purple-500 transition-colors hover:bg-purple-50 sm:min-h-0"
           >
             ดูงานทั้งหมด
           </button>
@@ -1333,32 +1326,35 @@ export default function DashboardView({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-purple-100 bg-white p-5 shadow-sm">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Overdue Aging</h3>
+        <div className="ui-card rounded-2xl p-5">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Overdue Aging</h3>
           <div className="mt-4 grid grid-cols-4 gap-2">
             {Object.entries(aging).map(([label, count]) => <button key={label} onClick={() => openDrilldown(`Overdue ${label} days`, agingTasks(label))} className="rounded-xl bg-red-50 p-3 text-center transition hover:bg-red-100"><div className="text-xl font-black text-red-600">{count}</div><div className="text-[10px] text-red-400">{label} days</div></button>)}
           </div>
         </div>
-        <div className="rounded-2xl border border-purple-100 bg-white p-5 shadow-sm">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">12-Month Trend</h3>
+        <div className="ui-card rounded-2xl p-5">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">12-Month Trend</h3>
           {monthlyTrend.length ? <div className="mt-3 overflow-x-auto"><table className="w-full text-[10px]"><thead className="text-left text-gray-400"><tr><th>Month</th><th>Completion</th><th>Created</th><th>Resolved</th><th>Blocked</th><th>{filters.status === "all" ? "Workload" : filters.status.replaceAll("_", " ")}</th></tr></thead><tbody>{monthlyTrend.map(([month, row]) => { const metrics = row.metrics || {}; const completion = metrics.total ? Math.round((metrics.done / metrics.total) * 100) : 0; return <tr key={month} className="border-t border-gray-50"><td className="py-1.5 font-semibold text-gray-600">{month}</td><td>{completion}%</td><td>{metrics.overdueCreated || 0}</td><td>{metrics.overdueResolved || 0}</td><td>{metrics.blocked || 0}</td><td>{trendCount(metrics, filters.status)}</td></tr> })}</tbody></table><p className="mt-2 text-[9px] text-gray-300">Historical snapshot metrics; task-level history is not available.</p></div> : <p className="mt-4 text-xs text-gray-400">Trend starts after the first successful sync.</p>}
         </div>
       </div>
 
       <RecentActivity events={taskEvents} tasks={allTasks} />
 
-      {/* ── Gantt Timeline ──────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-purple-100 bg-white shadow-sm animate-magic-enter" style={{ animationDelay: "100ms" }}>
+      {/* The source has due dates but no start dates: render a deadline roadmap, not a Gantt duration. */}
+      <div className="ui-card rounded-2xl">
         <div className="px-5 py-4 border-b border-purple-50">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-purple-400" />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Timeline Overview</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Deadline Roadmap</h3>
           </div>
         </div>
         <div className="p-3 relative">
-          <GanttTimeline
+          <DeadlineRoadmap
             allTasks={filteredTasks}
             brandNameForTask={brandNameForTask}
+            onOpenTask={onOpenTask}
+            assignedNames={assignedNames}
+            preferenceOwner={preferenceOwner}
           />
         </div>
       </div>
@@ -1367,17 +1363,17 @@ export default function DashboardView({
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
         {/* Client Health Table — show worst first, expandable */}
-        <div className="xl:col-span-2 rounded-2xl border border-purple-100 bg-white shadow-sm">
+        <div className="ui-card xl:col-span-2 rounded-2xl">
           <div className="px-5 py-4 border-b border-purple-50">
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-purple-400" />
-              <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Client Health</h3>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Client Health</h3>
               <span className="text-[10px] text-gray-400 ml-1">{clientHealth.length} active</span>
             </div>
           </div>
           <div className="p-3 space-y-1.5">
             {/* Header */}
-            <div className="flex items-center gap-3 px-4 py-1 text-[9px] font-bold uppercase tracking-widest text-gray-400">
+            <div className="hidden items-center gap-3 px-4 py-1 text-[9px] font-bold uppercase tracking-widest text-gray-400 md:flex">
               <div className="w-56 shrink-0">Client</div>
               <div className="flex-1">Progress</div>
               <div className="w-16 text-center">Overdue</div>
@@ -1386,10 +1382,9 @@ export default function DashboardView({
             </div>
             {clientHealth.length > 0 ? (
               <>
-                {(healthShowAll ? clientHealth : clientHealth.slice(0, HEALTH_PREVIEW_COUNT)).map((c, hi) => (
+                {(healthShowAll ? clientHealth : clientHealth.slice(0, HEALTH_PREVIEW_COUNT)).map((c) => (
                   <ClientHealthRow
                     key={c.name}
-                    animDelay={Math.min(hi, 10) * 60}
                     name={c.name}
                     rawTabNames={c.rawTabNames}
                     assignmentKey={c.assignmentKey}
@@ -1400,6 +1395,7 @@ export default function DashboardView({
                     assignments={assignments}
                     teamMembers={teamMembers}
                     onUpdateAssignment={onUpdateAssignment}
+                    canManageAssignments={canManageAssignments}
                     onRename={canAdmin ? handleInlineRename : null}
                     onOpen={() => openDrilldown(c.name, filteredTasks.filter((task) => brandNameForTask(task) === c.name))}
                   />
@@ -1423,10 +1419,10 @@ export default function DashboardView({
         </div>
 
         {/* Overdue Urgent List */}
-        <div className={`rounded-2xl border border-red-100 bg-white shadow-sm ${overdue.length > 0 ? "animate-overdue-glow" : ""}`}>
+        <div className="ui-card rounded-2xl border-red-100">
           <div className="px-5 py-4 border-b border-red-50">
             <div className="flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full bg-red-400 ${overdue.length > 0 ? "animate-overdue-pulse" : ""}`} />
+              <span className="h-2 w-2 rounded-full bg-red-400" />
               <h3 className="text-xs font-bold uppercase tracking-widest text-red-400">Overdue</h3>
               {overdue.length > 0 && (
                 <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-600">{overdue.length}</span>
@@ -1436,8 +1432,8 @@ export default function DashboardView({
           <div className="p-2">
             {overdue.length > 0 ? (
               <div className="space-y-0.5">
-                {overdue.slice(0, 10).map((t, oi) => (
-                  <OverdueItem key={taskKey(t)} task={t} brandName={brandNameForTask(t)} animDelay={oi * 50} />
+                {overdue.slice(0, 10).map((t) => (
+                  <OverdueItem key={taskKey(t)} task={t} brandName={brandNameForTask(t)} />
                 ))}
                 {overdue.length > 10 && (
                   <div className="text-center py-2 text-[10px] text-gray-400">
@@ -1455,23 +1451,22 @@ export default function DashboardView({
       </div>
 
       {/* ── ④ Team Workload ──────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-purple-100 bg-white shadow-sm">
+      <div className="ui-card rounded-2xl">
         <div className="px-5 py-4 border-b border-purple-50">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-purple-400" />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Team Workload</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Team Workload</h3>
             <span className="text-[10px] text-gray-400 ml-1">{teamMembers.length} members</span>
           </div>
         </div>
         <div className="p-4 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-          {teamWorkload.memberStats.map(({ member, stats }, mi) => (
+          {teamWorkload.memberStats.map(({ member, stats }) => (
             <MemberCard
               key={member.name}
               member={member}
               stats={stats}
               maxOverdue={teamWorkload.maxOverdue}
               onOpen={() => openDrilldown(`งานของ ${member.name}`, filteredTasks.filter((task) => assignedNames(task).includes(member.name)))}
-              animDelay={mi * 80}
             />
           ))}
         </div>
@@ -1484,24 +1479,25 @@ export default function DashboardView({
       </div>
 
       {/* ── ⑤ Upcoming ───────────────────────────────────────────────── */}
-      <div className="rounded-2xl border border-purple-100 bg-white shadow-sm">
+      <div className="ui-card rounded-2xl">
         <div className="px-5 py-4 border-b border-purple-50">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-amber-400" />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-purple-400">Upcoming</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Upcoming</h3>
             <span className="text-[10px] text-gray-400 ml-1">{upcoming.length} tasks</span>
           </div>
         </div>
         <div className="p-4 space-y-4">
           {upcomingByDay.length > 0 ? (
-            upcomingByDay.map(([dateKey, tasks], di) => (
-              <div key={dateKey} className="animate-magic-enter" style={{ animationDelay: `${di * 60}ms` }}>
+            upcomingByDay.map(([dateKey, tasks]) => (
+              <div key={dateKey}>
                 <UpcomingDayGroup dateKey={dateKey} tasks={tasks} brandNameForTask={brandNameForTask} />
               </div>
             ))
           ) : (
             <div className="text-center py-6 text-sm text-gray-300">ไม่มีงาน upcoming</div>
           )}
+          {upcoming.length > upcomingLimit && <button type="button" onClick={() => setUpcomingLimit((value) => value + 50)} className="ui-button ui-button-secondary mx-auto block text-xs">Show 50 more</button>}
         </div>
       </div>
 

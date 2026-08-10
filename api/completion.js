@@ -5,7 +5,7 @@ import { validIsoDate } from "../src/lib/dates.js"
 export function validateCompletion(body) {
   if (!body || typeof body.taskKey !== "string" || !/^[^:]+:\d+:[^:]+$/.test(body.taskKey)) return "Invalid task key"
   if (typeof body.spreadsheetId !== "string" || !body.spreadsheetId.trim() || body.spreadsheetId.length > 200) return "Invalid sheet target"
-  if (!Number.isInteger(body.sheetGid) || typeof body.taskId !== "string" || !body.taskId.trim() || body.taskId.length > 200) return "Invalid sheet target"
+  if (!Number.isInteger(body.sheetGid) || typeof body.taskId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(body.taskId)) return "Invalid sheet target"
   if (typeof body.done !== "boolean") return "Invalid completion payload"
   if (body.actualSubmit !== undefined && body.actualSubmit !== null && !validIsoDate(body.actualSubmit)) return "Invalid completion date"
   return null
@@ -24,6 +24,7 @@ export default async function handler(request, response) {
     const { data: before, error: beforeError } = await admin.from("tasks_current").select("*").eq("task_key", body.taskKey).maybeSingle()
     if (beforeError) throw beforeError
     if (!before) return send(response, 404, { error: "Task not found" })
+    if (!before.active) return send(response, 409, { error: "Task unavailable" })
     if (before.spreadsheet_id !== body.spreadsheetId || Number(before.sheet_gid) !== body.sheetGid || before.task_id !== body.taskId) {
       return send(response, 409, { error: "Task target does not match the current snapshot" })
     }
@@ -37,24 +38,17 @@ export default async function handler(request, response) {
     })
 
     try {
-      const after = { ...before, row_index: result.rowIndex || before.row_index, done: body.done, actual_submit: body.actualSubmit || null, source_synced_at: new Date().toISOString() }
-      const { error } = await admin.from("tasks_current").update({
-        row_index: after.row_index,
-        done: body.done,
-        actual_submit: body.actualSubmit || null,
-        source_synced_at: after.source_synced_at,
-      }).eq("task_key", body.taskKey)
-      if (error) throw error
-      const { error: eventError } = await admin.from("task_events").insert({
-        resource: "tasks_current",
-        record_key: body.taskKey,
-        event_type: "update",
-        before_value: before,
-        after_value: after,
-        actor: user.id,
-        actor_email: user.email,
+      const savedAt = new Date().toISOString()
+      const { error } = await admin.rpc("finalize_completion", {
+        p_task_key: body.taskKey,
+        p_row_index: result.rowIndex || before.row_index,
+        p_done: body.done,
+        p_actual_submit: body.actualSubmit || null,
+        p_actor: user.id,
+        p_actor_email: user.email,
+        p_synced_at: savedAt,
       })
-      if (eventError) throw eventError
+      if (error) throw error
       return send(response, 200, { success: true, done: body.done, actualSubmit: body.actualSubmit || null })
     } catch (snapshotError) {
       console.error("[completion:snapshot]", snapshotError)

@@ -195,7 +195,7 @@ begin
     when 'team_members' then coalesce(new.name, old.name)
   end;
   actor_id := case
-    when TG_TABLE_NAME = 'sheets' then coalesce(new.created_by, old.created_by, auth.uid())
+    when TG_TABLE_NAME = 'sheets' then coalesce(auth.uid(), new.created_by, old.created_by)
     when TG_OP = 'DELETE' then coalesce(old.updated_by, auth.uid())
     else coalesce(new.updated_by, auth.uid())
   end;

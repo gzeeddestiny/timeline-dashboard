@@ -12,7 +12,7 @@ function daysFromToday(dueDate) {
 
 function groupByClient(tasks) {
   return tasks.reduce((acc, task) => {
-    const key = `${task.clientName}::${task.spreadsheetId}`
+    const key = `${task.clientName}::${task.spreadsheetId}::${task.sheetGid}`
     if (!acc[key]) acc[key] = []
     acc[key].push(task)
     return acc
@@ -64,12 +64,12 @@ function ChevronIcon({ open }) {
 
 function MonthCell({ month, compact }) {
   const pad = compact ? "px-5 py-2.5" : "px-5 py-4"
-  if (!month) return <td className={`${pad} text-purple-200`}>—</td>
+  if (!month) return <td className={`${pad} text-gray-400`}>—</td>
   const isInternal = month.toLowerCase() === "internal"
   return (
     <td className={pad}>
       <span className={`inline-block rounded-lg px-2.5 py-1 text-[11px] font-black tracking-widest uppercase ${
-        isInternal ? "bg-purple-600 text-white shadow-sm shadow-purple-300" : "bg-purple-100 text-purple-600"
+        isInternal ? "bg-[var(--ui-brand)] text-white" : "bg-[var(--ui-brand-soft)] text-[var(--ui-brand)]"
       }`}>
         {month}
       </span>
@@ -77,19 +77,22 @@ function MonthCell({ month, compact }) {
   )
 }
 
-function StatusToggleCell({ task, onToggle, compact }) {
+function StatusToggleCell({ task, onToggle, compact, editable = true }) {
   const size = compact ? "h-6 w-6" : "h-7 w-7"
   const icon = compact ? "h-3.5 w-3.5" : "h-4 w-4"
   const handleClick = (e) => {
     e.stopPropagation()
-    if (onToggle) onToggle(task, !task.done)
+    if (editable && onToggle) onToggle(task, !task.done)
   }
   return (
     <td className={compact ? "px-4 py-2.5" : "px-4 py-4"}>
       <button
+        type="button"
         onClick={handleClick}
-        title={task.done ? "คลิกเพื่อยกเลิก" : "คลิกเพื่อ Mark Done"}
-        className={`inline-flex items-center justify-center rounded-full transition-all hover:scale-110 active:scale-95 cursor-pointer ${size} ${
+        disabled={!editable}
+        aria-label={task.done ? "Mark task not done" : "Mark task done"}
+        title={!editable ? "Task editing is unavailable" : task.done ? "คลิกเพื่อยกเลิก" : "คลิกเพื่อ Mark Done"}
+        className={`inline-flex items-center justify-center rounded-full transition-colors duration-150 cursor-pointer ${size} ${
           task.done ? "bg-green-100 hover:bg-green-200" : "bg-red-100 hover:bg-red-200"
         }`}
       >
@@ -168,7 +171,7 @@ const WORKFLOW_OPTIONS = [
   ["blocked", "Blocked"],
 ]
 
-function WorkflowCell({ task, workflow, onUpdate, saveStatus, compact }) {
+function WorkflowCell({ task, workflow, onUpdate, saveStatus, compact, editable = true }) {
   const key = sharedTaskKey(task)
   const value = workflow[key] || "not_started"
   return (
@@ -177,12 +180,13 @@ function WorkflowCell({ task, workflow, onUpdate, saveStatus, compact }) {
         <div className="flex items-center gap-1">
           <select
             value={value}
+            disabled={!editable}
             onChange={(event) => onUpdate?.(key, event.target.value)}
-            className={`rounded-lg border bg-white px-2 py-1 text-[11px] font-medium text-gray-600 outline-none focus:border-purple-400 ${saveStatus === "failed" ? "border-red-300" : "border-purple-100"}`}
+            className={`ui-field min-h-0 px-2 py-1 text-[11px] font-medium text-gray-600 ${saveStatus === "failed" ? "border-red-300" : ""}`}
           >
             {WORKFLOW_OPTIONS.map(([option, label]) => <option key={option} value={option}>{label}</option>)}
           </select>
-          {saveStatus === "saving" && <span className="text-[9px] text-purple-400">Saving…</span>}
+          {saveStatus === "saving" && <span className="text-[9px] text-purple-700">Saving…</span>}
           {saveStatus === "failed" && <button type="button" onClick={() => onUpdate?.(key, value)} className="text-[9px] font-semibold text-red-500">Retry</button>}
         </div>
       )}
@@ -191,51 +195,55 @@ function WorkflowCell({ task, workflow, onUpdate, saveStatus, compact }) {
 }
 
 // ─── Priority Toggle Button ──────────────────────────────────────────────────
-// Tiny button next to client name. Cycles: none → fire → think → none
-// The row itself gets a full-width fire/think CSS class effect.
+// Compact business priority control. Legacy values are normalized on read.
 
-const PRIORITY_ORDER = [null, "fire", "think"]
+const PRIORITY_ORDER = ["normal", "high", "urgent"]
 
-function PriorityToggle({ taskKey, legacyKey, priorities, onUpdate }) {
-  const value = priorities[taskKey] || priorities[legacyKey] || null
+function normalizePriority(value) {
+  if (value === "fire") return "urgent"
+  if (value === "think") return "high"
+  return value || "normal"
+}
+
+function PriorityToggle({ taskKey, legacyKey, priorities, onUpdate, editable = true }) {
+  const value = normalizePriority(priorities[taskKey] || priorities[legacyKey])
 
   const cycle = (e) => {
     e.stopPropagation()
     const idx = PRIORITY_ORDER.indexOf(value)
     const nextVal = PRIORITY_ORDER[(idx + 1) % PRIORITY_ORDER.length]
-    onUpdate(taskKey, nextVal || "")
+    if (editable) onUpdate(taskKey, nextVal)
   }
 
   return (
     <button
       onClick={cycle}
-      className="ml-1 shrink-0 rounded p-0.5 text-gray-300 transition-all hover:scale-110 hover:text-orange-500"
-      title={value === "fire" ? "ไฟไหม้ → ฝากคิด" : value === "think" ? "ฝากคิด → ลบ priority" : "ใส่ priority"}
+      disabled={!editable}
+      className={`ml-1 shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase transition ${value === "urgent" ? "border-red-200 bg-red-50 text-red-600" : value === "high" ? "border-amber-200 bg-amber-50 text-amber-600" : "border-gray-200 bg-white text-gray-400"}`}
+      title={`Priority: ${value}. Click to change.`}
     >
-      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill={value ? "currentColor" : "none"} stroke="currentColor" strokeWidth={value ? "0" : "1.5"}>
-        <path d="M12 2C10 6 6 8 6 13a6 6 0 0 0 12 0c0-5-4-7-6-11z" />
-      </svg>
+      {value}
     </button>
   )
 }
 
 /** Get priority CSS class for a row */
 function getPriorityClass(taskKey, legacyKey, priorities) {
-  const v = priorities[taskKey] || priorities[legacyKey]
-  if (v === "fire") return "priority-fire"
-  if (v === "think") return "priority-think"
+  const v = normalizePriority(priorities[taskKey] || priorities[legacyKey])
+  if (v === "urgent") return "priority-urgent"
+  if (v === "high") return "priority-high"
   return ""
 }
 
 // ─── Remark Cell ──────────────────────────────────────────────────────────────
 
-function RemarkCell({ taskKey, legacyKey, remarks, onUpdate, saveStatus, compact }) {
+function RemarkCell({ taskKey, legacyKey, remarks, onUpdate, saveStatus, compact, editable = true }) {
   const value = remarks[taskKey] ?? remarks[legacyKey] ?? ""
   const [editing, setEditing] = useState(false)
   const [draft,   setDraft  ] = useState("")
   const cancelRef = useRef(false)
 
-  const startEdit = () => { cancelRef.current = false; setDraft(value); setEditing(true) }
+  const startEdit = () => { if (!editable) return; cancelRef.current = false; setDraft(value); setEditing(true) }
   const save = () => {
     if (!cancelRef.current && draft.trim() !== value) onUpdate(taskKey, draft.trim())
     cancelRef.current = false
@@ -259,7 +267,7 @@ function RemarkCell({ taskKey, legacyKey, remarks, onUpdate, saveStatus, compact
             if (e.key === "Escape") { e.preventDefault(); cancel() }
           }}
           placeholder="เพิ่ม note..."
-          className="w-36 rounded-lg border border-purple-300 bg-white px-2.5 py-1.5 text-xs text-gray-700 outline-none focus:ring-2 focus:ring-purple-200"
+          className="ui-field w-36 min-h-0 px-2.5 py-1.5 text-xs text-gray-700"
         />
       </td>
     )
@@ -267,13 +275,16 @@ function RemarkCell({ taskKey, legacyKey, remarks, onUpdate, saveStatus, compact
 
   return (
     <td className={pad}>
-      <div onClick={startEdit} className="group flex min-w-[80px] cursor-pointer items-center gap-1.5">
+      <div className="group flex min-w-[80px] items-center gap-1.5">
         {value ? (
           <>
-            <span className="flex-1 text-xs text-gray-500 group-hover:text-purple-700 line-clamp-2 max-w-[140px]">{value}</span>
+            <button type="button" onClick={startEdit} disabled={!editable} className="max-w-[140px] flex-1 text-left text-xs text-gray-500 line-clamp-2 hover:text-purple-700 disabled:cursor-default">{value}</button>
             <button
+              type="button"
               onClick={clear}
-              className="shrink-0 rounded p-0.5 text-gray-200 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+              disabled={!editable}
+              aria-label="Clear note"
+              className="shrink-0 rounded p-1 text-gray-300 hover:text-red-500 focus-visible:text-red-500 disabled:hidden"
             >
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -281,11 +292,11 @@ function RemarkCell({ taskKey, legacyKey, remarks, onUpdate, saveStatus, compact
             </button>
           </>
         ) : (
-          <span className="text-xs italic text-purple-200 transition-colors group-hover:text-purple-400">
+          <button type="button" onClick={startEdit} disabled={!editable} className="text-xs italic text-gray-400 hover:text-purple-700 disabled:cursor-default">
             + note
-          </span>
+          </button>
         )}
-        {saveStatus === "saving" && <span className="text-[9px] text-purple-400">Saving…</span>}
+        {saveStatus === "saving" && <span className="text-[9px] text-purple-700">Saving…</span>}
         {saveStatus === "saved" && value && <span className="text-[9px] text-green-500">Saved</span>}
         {saveStatus === "failed" && (
           <button onClick={(e) => { e.stopPropagation(); onUpdate(taskKey, value) }} className="text-[9px] font-semibold text-red-500 hover:text-red-700">
@@ -307,7 +318,7 @@ function ProgressBar({ stats }) {
     <div className="mt-1.5 flex items-center gap-2">
       <div className="h-1.5 w-20 overflow-hidden rounded-full bg-gray-100">
         <div
-          className="h-full rounded-full transition-all duration-500"
+          className="h-full rounded-full transition-[width] duration-150"
           style={{ width: `${pct}%`, backgroundColor: color }}
         />
       </div>
@@ -323,7 +334,7 @@ function ProgressBar({ stats }) {
 
 function SkeletonRow() {
   return (
-    <tr className="animate-pulse">
+    <tr>
       <td className="px-4 py-4"><div className="h-7 w-7 rounded-full bg-red-100" /></td>
       <td className="px-5 py-4"><div className="h-6 w-16 rounded-lg bg-purple-100" /></td>
       <td className="px-6 py-4"><div className="h-5 w-32 rounded-full bg-purple-100" /></td>
@@ -337,9 +348,35 @@ function SkeletonRow() {
   )
 }
 
+function MobileTaskCard({ task, brandName, onOpen, onToggle, workflow, priorities, editable }) {
+  const key = sharedTaskKey(task)
+  const priority = normalizePriority(priorities[key])
+  const late = daysFromToday(task.dueDate)
+  return (
+    <article className={`ui-card rounded-2xl p-4 ${priority === "urgent" ? "priority-urgent border-red-200" : priority === "high" ? "priority-high border-amber-200" : ""}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-purple-500">
+            <span>{brandName}</span><span>·</span><span>{task.month || "No month"}</span>
+            {priority !== "normal" && <span className={priority === "urgent" ? "text-red-600" : "text-amber-600"}>{priority}</span>}
+          </div>
+          <h3 className="mt-1 text-sm font-bold text-gray-800">{task.topic}</h3>
+          <p className="mt-1 text-xs text-gray-500">{task.responsibility || "ยังไม่ระบุผู้รับผิดชอบ"}</p>
+        </div>
+        <button type="button" disabled={!editable} onClick={() => onToggle?.(task, !task.done)} aria-label={task.done ? "Mark not done" : "Mark done"} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold disabled:opacity-40 ${task.done ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}>{task.done ? "✓" : "○"}</button>
+      </div>
+      <div className="mt-3 flex items-center gap-2 text-[11px]">
+        <span className="rounded-full bg-white/80 px-2 py-1 font-semibold text-gray-600">{(workflow[key] || "not_started").replaceAll("_", " ")}</span>
+        <span className={late !== null && late < 0 && !task.done ? "font-bold text-red-600" : "text-gray-400"}>{task.dueDate ? late < 0 && !task.done ? `${Math.abs(late)} days late` : `Due ${fmtDate(task.dueDate)}` : "Unscheduled"}</span>
+        <button type="button" onClick={() => onOpen?.(task)} className="ui-button ui-button-primary ml-auto px-3 py-2 font-bold">รายละเอียด</button>
+      </div>
+    </article>
+  )
+}
+
 // ─── TaskTable ────────────────────────────────────────────────────────────────
 
-export default function TaskTable({ title, badge, tasks, isLoading, clientStats = {}, remarks = {}, onUpdateRemark, priorities = {}, onUpdatePriority, assignments = {}, onUpdateAssignment, teamMembers = [], brandNameForTask = (task) => task.clientName, assignmentKeyForTask = (task) => task.clientName, saveStatus = {}, onToggle, onOpenTask, workflow = {}, onUpdateWorkflow, canManageAssignments = true }) {
+export default function TaskTable({ title, badge, tasks, isLoading, clientStats = {}, remarks = {}, onUpdateRemark, priorities = {}, onUpdatePriority, assignments = {}, onUpdateAssignment, teamMembers = [], brandNameForTask = (task) => task.clientName, assignmentKeyForTask = (task) => task.clientName, saveStatus = {}, onToggle, onOpenTask, workflow = {}, onUpdateWorkflow, canManageAssignments = true, canEditTask = () => true }) {
   const [expanded, setExpanded] = useState(new Set())
   const fileColorMap = useMemo(() => buildFileColorMap(tasks), [tasks])
 
@@ -359,13 +396,17 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
     <div className="mb-6">
       <div className="mb-3 flex items-center gap-2">
         {badge && <span className={`h-2 w-2 rounded-full ${badge}`} />}
-        <h2 className="text-xs font-bold uppercase tracking-widest text-purple-400">{title}</h2>
+        <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">{title}</h2>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-purple-100 bg-white shadow-sm">
+      <div className="space-y-2 sm:hidden">
+        {isLoading ? <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]">Loading…</div> : tasks.length ? tasks.map((task) => <MobileTaskCard key={sharedTaskKey(task)} task={task} brandName={brandNameForTask(task)} onOpen={onOpenTask} onToggle={onToggle} workflow={workflow} priorities={priorities} editable={canEditTask(task)} />) : <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]">No tasks found</div>}
+      </div>
+
+      <div className="ui-card hidden overflow-x-auto rounded-2xl sm:block">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-purple-100 bg-purple-50 text-left text-[11px] font-bold uppercase tracking-wider text-purple-400">
+            <tr className="border-b border-[var(--ui-border)] bg-[var(--ui-surface-subtle)] text-left text-[11px] font-bold uppercase tracking-wider text-[var(--ui-muted)]">
               <th className="px-4 py-4">Status</th>
               <th className="px-3 py-4">Workflow</th>
               <th className="px-5 py-4">Month</th>
@@ -381,13 +422,13 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-purple-50">
+          <tbody className="divide-y divide-[var(--ui-border)]">
             {isLoading ? (
               Array.from({ length: 3 }).map((_, i) => <SkeletonRow key={i} />)
 
             ) : tasks.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-6 py-10 text-center text-sm text-purple-200">
+                <td colSpan={10} className="px-6 py-10 text-center text-sm text-[var(--ui-muted)]">
                   No tasks found — sync a Google Sheet to load data
                 </td>
               </tr>
@@ -404,29 +445,28 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
               // File-level background color + left stripe
               const fc = fileColorMap[first.spreadsheetId || first.month || "unknown"]
               const rowBg    = fc ? `${fc.bg} border-l-4 ${fc.stripe}` : (groupIdx % 2 === 0 ? "bg-white" : "bg-purple-50/40")
-              const rowHover = "hover:brightness-[0.97]"
+              const rowHover = "ui-interactive"
               const subBg    = fc ? `${fc.sub} border-l-4 ${fc.stripe}` : (groupIdx % 2 === 0 ? "bg-purple-50/30" : "bg-purple-100/30")
-              const subHover = "hover:brightness-[0.95]"
+              const subHover = "ui-interactive"
               const firstPriorityKey = sharedTaskKey(first)
               const firstLegacyKey = `${rawClientName}::${first.topic}`
               const firstPriorityCls = getPriorityClass(firstPriorityKey, firstLegacyKey, priorities)
+              const firstEditable = canEditTask(first)
 
               return (
                 <Fragment key={groupKey}>
                   {/* Group summary row */}
                   <tr
-                    onClick={() => hasMore && toggle(groupKey)}
-                    className={`transition-colors ${firstPriorityCls || rowBg} ${hasMore ? `cursor-pointer ${rowHover}` : rowHover} animate-magic-enter`}
-                    style={{ animationDelay: `${Math.min(groupIdx, 10) * 60}ms` }}
+                    className={`transition-colors duration-150 ${firstPriorityCls || rowBg} ${rowHover}`}
                   >
-                    <StatusToggleCell task={first} onToggle={onToggle} />
-                    <WorkflowCell task={first} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${firstPriorityKey}`]} />
+                    <StatusToggleCell task={first} onToggle={onToggle} editable={firstEditable} />
+                    <WorkflowCell task={first} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${firstPriorityKey}`]} editable={firstEditable} />
                     <MonthCell month={first.month} />
 
                     {/* Client Name + Progress Bar */}
                     <td className="px-6 py-4">
                       <div className="flex items-start gap-2">
-                        {hasMore ? <ChevronIcon open={isOpen} /> : <span className="w-3.5 shrink-0" />}
+                        {hasMore ? <button type="button" onClick={() => toggle(groupKey)} aria-label={`${isOpen ? "Collapse" : "Expand"} ${clientName}`} aria-expanded={isOpen} className="rounded p-1 hover:bg-purple-100 focus:outline-none focus:ring-2 focus:ring-purple-300"><ChevronIcon open={isOpen} /></button> : <span className="w-5 shrink-0" />}
                         <div className="min-w-0">
                           <span className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700">
                             <SheetTabIcon />
@@ -453,6 +493,7 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
                           legacyKey={firstLegacyKey}
                           priorities={priorities}
                           onUpdate={onUpdatePriority || (() => {})}
+                          editable={firstEditable}
                         />
                       </div>
                     </td>
@@ -481,18 +522,20 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
                       remarks={remarks}
                       onUpdate={handleRemark}
                       saveStatus={saveStatus[`remarks:${firstPriorityKey}`]}
+                      editable={firstEditable}
                     />
                   </tr>
 
                   {/* Expanded sub-rows */}
-                  {isOpen && clientTasks.slice(1).map((task, subIdx) => {
+                  {isOpen && clientTasks.slice(1).map((task) => {
                     const subPriorityKey = sharedTaskKey(task)
                     const subLegacyKey = `${task.clientName}::${task.topic}`
                     const subPriorityCls = getPriorityClass(subPriorityKey, subLegacyKey, priorities)
+                    const subEditable = canEditTask(task)
                     return (
-                    <tr key={subPriorityKey} className={`${subPriorityCls || subBg} transition-colors ${subHover} animate-magic-enter`} style={{ animationDelay: `${subIdx * 40}ms` }}>
-                      <StatusToggleCell task={task} onToggle={onToggle} compact />
-                      <WorkflowCell task={task} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${subPriorityKey}`]} compact />
+                    <tr key={subPriorityKey} className={`${subPriorityCls || subBg} transition-colors duration-150 ${subHover}`}>
+                      <StatusToggleCell task={task} onToggle={onToggle} compact editable={subEditable} />
+                      <WorkflowCell task={task} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${subPriorityKey}`]} compact editable={subEditable} />
                       <MonthCell month={task.month} compact />
                       <td className="py-2.5 pl-14 pr-6">
                         <span className="text-xs text-purple-200">└</span>
@@ -522,6 +565,7 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
                         onUpdate={handleRemark}
                         saveStatus={saveStatus[`remarks:${subPriorityKey}`]}
                         compact
+                        editable={subEditable}
                       />
                     </tr>
                   )})}
@@ -533,7 +577,7 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
       </div>
 
       {!isLoading && (
-        <p className="mt-2 text-right text-xs text-purple-300">
+        <p className="mt-2 text-right text-xs text-[var(--ui-muted)]">
           {groupList.length} {groupList.length === 1 ? "client" : "clients"} · {tasks.length} {tasks.length === 1 ? "task" : "tasks"}
         </p>
       )}
@@ -592,7 +636,7 @@ export function CompletedClients({ allTasks, assignments = {}, onUpdateAssignmen
         {completedClients.map((client) => (
           <div
             key={client.assignmentKey}
-            className="flex items-center gap-3 rounded-xl border border-green-100 bg-green-50/40 px-4 py-2.5 opacity-75 hover:opacity-100 transition-opacity"
+            className="flex flex-wrap items-center gap-3 rounded-xl border border-green-100 bg-green-50/40 px-4 py-2.5 opacity-75 transition-opacity hover:opacity-100 sm:flex-nowrap"
           >
             {/* Check icon */}
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500 shadow-sm">
@@ -631,7 +675,7 @@ export function CompletedClients({ allTasks, assignments = {}, onUpdateAssignmen
             )}
 
             {/* Date range */}
-            <span className="ml-auto text-[10px] text-green-400">
+            <span className="w-full text-[10px] text-green-400 sm:ml-auto sm:w-auto">
               {fmt(client.startDate)} — {fmt(client.endDate)}
             </span>
 

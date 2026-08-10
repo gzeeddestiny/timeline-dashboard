@@ -7,6 +7,7 @@ export async function callAppsScript(payload) {
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify({ ...payload, secret }),
     redirect: "follow",
+    signal: AbortSignal.timeout(15_000),
   })
   if (!response.ok) throw new Error(`Apps Script failed (${response.status})`)
   const result = await response.json().catch(() => null)

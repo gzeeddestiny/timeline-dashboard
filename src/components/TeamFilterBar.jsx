@@ -12,16 +12,16 @@ export default function TeamFilterBar({ activeMember, onSelect, members = [] }) 
       {/* "All" chip */}
       <button
         onClick={() => onSelect(null)}
-        className={`rounded-full px-3 sm:px-2.5 py-1.5 sm:py-1 text-xs sm:text-[10px] font-bold transition-all shrink-0 ${
+        className={`rounded-full px-3 sm:px-2.5 py-1.5 sm:py-1 text-xs sm:text-[10px] font-bold transition-colors duration-150 shrink-0 ${
           !activeMember
-            ? "bg-purple-600 text-white shadow-sm"
-            : "bg-gray-100 text-gray-400 hover:bg-purple-50 hover:text-purple-600 active:bg-purple-100"
+            ? "bg-[var(--ui-brand)] text-white"
+            : "bg-[var(--ui-surface-subtle)] text-[var(--ui-muted)] hover:bg-[var(--ui-brand-soft)] hover:text-[var(--ui-brand)]"
         }`}
       >
         All
       </button>
 
-      <div className="h-5 sm:h-4 w-px bg-purple-200/60 mx-0.5 shrink-0" />
+      <div className="h-5 sm:h-4 w-px bg-[var(--ui-border)] mx-0.5 shrink-0" />
 
       {activeRoles.map((role, ri) => {
         const rc = ROLE_CONFIG[role]
@@ -38,9 +38,9 @@ export default function TeamFilterBar({ activeMember, onSelect, members = [] }) 
                   key={m.name}
                   onClick={() => onSelect(isActive ? null : m.name)}
                   title={`${m.name} (${rc.label})`}
-                  className={`flex items-center gap-1 rounded-full p-0.5 transition-all duration-200 shrink-0 ${
+                  className={`flex items-center gap-1 rounded-full p-0.5 transition-colors duration-150 shrink-0 ${
                     isActive
-                      ? `${rc.bg} ring-1 ${rc.ring} shadow-sm pr-2 animate-chip-glow animate-magic-shimmer`
+                      ? `${rc.bg} ring-1 ${rc.ring} pr-2`
                       : "hover:bg-gray-50 active:bg-gray-100"
                   }`}
                 >
@@ -68,7 +68,7 @@ export default function TeamFilterBar({ activeMember, onSelect, members = [] }) 
               )
             })}
 
-            {ri < activeRoles.length - 1 && <div className="h-5 sm:h-4 w-px bg-purple-100/60 mx-0.5" />}
+            {ri < activeRoles.length - 1 && <div className="h-5 sm:h-4 w-px bg-[var(--ui-border)] mx-0.5" />}
           </div>
         )
       })}

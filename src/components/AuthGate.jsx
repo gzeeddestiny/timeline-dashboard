@@ -14,12 +14,12 @@ function LoginScreen() {
     if (authError) setError(authError.message)
   }
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-purple-50 via-white to-purple-100 p-6">
-      <section className="w-full max-w-sm rounded-3xl border border-purple-100 bg-white p-8 text-center shadow-xl shadow-purple-100/60">
+    <main className="flex min-h-screen items-center justify-center bg-[var(--ui-canvas)] p-6">
+      <section className="ui-card w-full max-w-sm rounded-3xl p-8 text-center">
         <img src={magicLogo} alt="MAGIC" className="mx-auto h-16 w-16" />
         <h1 className="mt-4 text-xl font-black text-purple-900">MAGIC Timeline</h1>
         <p className="mt-2 text-sm text-gray-400">เข้าสู่ระบบด้วยอีเมลที่ Admin อนุมัติแล้ว</p>
-        <button onClick={login} className="mt-6 w-full rounded-xl bg-purple-700 px-4 py-3 text-sm font-bold text-white transition hover:bg-purple-800 active:scale-[0.99]">
+        <button onClick={login} className="ui-button ui-button-primary mt-6 w-full py-3 text-sm">
           Sign in with Google
         </button>
         {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
@@ -32,7 +32,7 @@ function AccessDenied({ email, onSignOut }) {
   const adminContact = import.meta.env.VITE_ADMIN_CONTACT || "Admin ของ Timeline Dashboard"
   return (
     <main className="flex min-h-screen items-center justify-center bg-gray-50 p-6">
-      <section className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-8 text-center shadow-sm">
+      <section className="ui-card w-full max-w-md rounded-2xl border-amber-200 p-8 text-center">
         <div className="text-3xl">🔒</div>
         <h1 className="mt-3 text-lg font-bold text-gray-800">ยังไม่ได้รับสิทธิ์เข้าใช้งาน</h1>
         <p className="mt-2 text-sm text-gray-500">บัญชี <strong>{email}</strong> ยังไม่อยู่ในรายชื่อที่อนุมัติ กรุณาติดต่อ {adminContact}</p>
@@ -45,7 +45,7 @@ function AccessDenied({ email, onSignOut }) {
 function SystemUnavailable({ maintenance = false }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-gray-50 p-6">
-      <section className="w-full max-w-md rounded-2xl border border-purple-100 bg-white p-8 text-center shadow-sm">
+      <section className="ui-card w-full max-w-md rounded-2xl p-8 text-center">
         <img src={magicLogo} alt="MAGIC" className="mx-auto h-14 w-14" />
         <h1 className="mt-4 text-lg font-bold text-purple-900">{maintenance ? "ระบบกำลังปรับปรุง" : "ระบบยังตั้งค่าไม่ครบ"}</h1>
         <p className="mt-2 text-sm text-gray-500">
@@ -121,7 +121,7 @@ export default function AuthGate({ children }) {
   if (maintenance) return <SystemUnavailable maintenance />
   if (!isSupabaseConfigured && !localFallback) return <SystemUnavailable />
   if (accessError) return <SystemUnavailable />
-  if (loading) return <div className="flex min-h-screen items-center justify-center text-sm text-purple-400">กำลังตรวจสอบสิทธิ์…</div>
+  if (loading) return <div className="flex min-h-screen items-center justify-center text-sm text-[var(--ui-muted)]">กำลังตรวจสอบสิทธิ์…</div>
   if (isSupabaseConfigured && !session) return <LoginScreen />
   if (isSupabaseConfigured && !access) return <AccessDenied email={session.user.email} onSignOut={value.signOut} />
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
