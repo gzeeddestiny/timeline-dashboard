@@ -65,6 +65,12 @@ export default function AuthGate({ children }) {
   const [loading, setLoading] = useState(isSupabaseConfigured)
 
   useEffect(() => {
+    if (session && window.location.href.endsWith("#")) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`)
+    }
+  }, [session])
+
+  useEffect(() => {
     if (!isSupabaseConfigured) return
     let active = true
     const resolve = (nextSession) => {
