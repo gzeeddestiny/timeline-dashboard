@@ -28,9 +28,10 @@ export function parseSheetDate(raw) {
   const value = String(raw).trim()
   if (!value) return ""
   if (validIsoDate(value)) return value
-  const dmy = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  const dmy = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/)
   if (dmy) {
-    const iso = `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`
+    const year = dmy[3].length === 2 ? `20${dmy[3]}` : dmy[3]
+    const iso = `${year}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`
     return validIsoDate(iso) ? iso : ""
   }
   return ""

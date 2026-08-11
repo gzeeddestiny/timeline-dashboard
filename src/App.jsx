@@ -11,6 +11,7 @@ import MyWorkView from "./components/MyWorkView"
 import AdminSettings from "./components/AdminSettings"
 import NotificationCenter from "./components/NotificationCenter"
 import TaskPanel from "./components/TaskPanel"
+import Emoji from "./components/Emoji"
 import { useAuth } from "./lib/auth"
 import { bangkokDate } from "./lib/dates"
 import magicLogo from "./assets/magic-logo.svg"
@@ -536,6 +537,16 @@ export default function App() {
     }
     addSheetInFlightRef.current = true
     try {
+      if (!isSupabaseConfigured) {
+        setSheets((current) => {
+          const next = [...current, sheet]
+          try { sessionStorage.setItem("magic-sheets", JSON.stringify(next)) } catch { /* local preview cache is optional */ }
+          return next
+        })
+        setInputUrl("")
+        setSharedError("เพิ่ม Sheet ใน Local Preview แล้ว — ข้อมูลนี้ยังไม่แชร์กับคนอื่นจนกว่าจะเชื่อม Supabase")
+        return
+      }
       const saved = await persistShared("sheets", sheet.spreadsheetId, sheet.url)
       if (!saved) return
       setSheets((prev) => prev.some((current) => current.spreadsheetId === sheet.spreadsheetId) ? prev : [...prev, sheet])
@@ -544,6 +555,14 @@ export default function App() {
   }
 
   const removeSheet = async (spreadsheetId) => {
+    if (!isSupabaseConfigured) {
+      setSheets((current) => {
+        const next = current.filter((sheet) => sheet.spreadsheetId !== spreadsheetId)
+        try { sessionStorage.setItem("magic-sheets", JSON.stringify(next)) } catch { /* local preview cache is optional */ }
+        return next
+      })
+      return
+    }
     const saved = await persistShared("sheets", spreadsheetId, null)
     if (!saved) return
     setSheets((prev) => prev.filter((sheet) => sheet.spreadsheetId !== spreadsheetId))
@@ -597,7 +616,7 @@ export default function App() {
     const sheetListChanged = signature !== sheetSignatureRef.current
     sheetSignatureRef.current = signature
     const cacheExpired = !lastSynced || Date.now() - lastSynced.getTime() >= SYNC_COOLDOWN_MS
-    if (sheetListChanged || cacheExpired) syncData()
+    if (isSupabaseConfigured && (sheetListChanged || cacheExpired)) syncData()
   }, [sheets, lastSynced, syncData])
 
   return (
@@ -672,7 +691,7 @@ export default function App() {
               </svg>
               <span className="hidden sm:inline">จัดการทีม</span>
             </button>}
-            {isAdmin && <button onClick={() => setShowAdminSettings(true)} className="rounded-lg border border-purple-200 px-2 py-1 text-[10px] font-semibold text-purple-600 hover:bg-purple-50">Admin</button>}
+            <button onClick={() => setShowAdminSettings(true)} className="ui-button ui-button-secondary min-h-11 px-2 text-[10px] font-semibold sm:min-h-0"><Emoji name={isAdmin ? "admin" : "add"} /> {isAdmin ? "Admin" : "Add Sheet"}</button>
             <NotificationCenter configured={isSupabaseConfigured} email={user?.email} onOpenTask={openTask} />
             {isSupabaseConfigured && <button onClick={signOut} className="rounded-lg px-2 py-1 text-[10px] text-gray-400 hover:bg-gray-50 hover:text-gray-600" title={user?.email}>Sign out</button>}
             <span className="rounded-md bg-purple-50 px-2 py-1 text-[10px] font-semibold text-purple-500 tabular-nums hidden md:block">
@@ -700,7 +719,7 @@ export default function App() {
                 onClick={retryPendingWrites}
                 className="ml-auto rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
               >
-                Retry
+                <Emoji name="retry" /> Retry
               </button>
             )}
             <button onClick={() => setSharedError(null)} aria-label="ปิดข้อความแจ้งเตือน" className="-my-2 -mr-2 flex min-h-11 min-w-11 items-center justify-center text-xs text-amber-500 hover:text-amber-700">✕</button>
@@ -716,11 +735,11 @@ export default function App() {
           open={showTeamManager}
           onClose={() => setShowTeamManager(false)}
         />}
-        <AdminSettings open={showAdminSettings} onClose={() => setShowAdminSettings(false)} currentEmail={user?.email} members={teamMembers} configured={isSupabaseConfigured} dataSources={{ sheets, inputUrl, setInputUrl, addSheet, removeSheet, syncData, isSyncing, lastSynced, syncError }} />
+        <AdminSettings open={showAdminSettings} onClose={() => setShowAdminSettings(false)} currentEmail={user?.email} members={teamMembers} configured={isSupabaseConfigured} isAdmin={isAdmin} onSaved={refreshShared} dataSources={{ sheets, inputUrl, setInputUrl, addSheet, removeSheet, syncData, isSyncing, lastSynced, syncError }} />
 
         {lastSynced && now - lastSynced.getTime() > 24 * 60 * 60 * 1000 && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
-            ข้อมูลเก่ากว่า 24 ชั่วโมง — ข้อมูล ณ {lastSynced.toLocaleString("th-TH")}
+            <Emoji name="warning" /> ข้อมูลเก่ากว่า 24 ชั่วโมง — ข้อมูล ณ {lastSynced.toLocaleString("th-TH")}
           </div>
         )}
 
@@ -732,6 +751,7 @@ export default function App() {
             {/* ── Overdue Tasks ───────────────────────────────────────────────── */}
             <TaskTable
               title="Overdue Tasks"
+              titleEmoji="overdue"
               badge="bg-red-400"
               tasks={displayOverdue}
               isLoading={isSyncing}
@@ -741,6 +761,7 @@ export default function App() {
             {/* ── Upcoming Deadlines ──────────────────────────────────────────── */}
             <TaskTable
               title="Upcoming Deadlines"
+              titleEmoji="upcoming"
               badge="bg-purple-400"
               tasks={displayUpcoming}
               isLoading={isSyncing}
@@ -749,6 +770,7 @@ export default function App() {
 
             <TaskTable
               title="Unscheduled"
+              titleEmoji="unscheduled"
               badge="bg-slate-400"
               tasks={displayUnscheduled}
               isLoading={isSyncing}

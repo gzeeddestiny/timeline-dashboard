@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { createPortal } from "react-dom"
-import { ROLE_CONFIG, ROLES } from "../lib/teamConfig"
+import { assignmentRoleMembers, ROLE_CONFIG, ROLES } from "../lib/teamConfig"
+import Emoji from "./Emoji"
 
 function MemberOption({ member, isSelected, onToggle }) {
   const rc = ROLE_CONFIG[member.role]
@@ -40,7 +41,7 @@ function PopupContent({ displayName, assignmentKey, current, allMembers, hasAssi
   return (
     <>
       <div className="text-[10px] font-bold uppercase tracking-wider text-purple-400 mb-1">
-        Assign Team — {displayName}
+        <Emoji name="assign" /> Assign Team — {displayName}
       </div>
 
       {ROLES.map((role) => {
@@ -58,7 +59,7 @@ function PopupContent({ displayName, assignmentKey, current, allMembers, hasAssi
                 <MemberOption
                   key={m.name}
                   member={m}
-                  isSelected={current[role] === m.name}
+                  isSelected={assignmentRoleMembers(current, role).includes(m.name)}
                   onToggle={(name) => toggleMember(role, name)}
                 />
               ))}
@@ -167,16 +168,15 @@ export default function AssignTeam({ displayName, assignmentKey, legacyKey, assi
 
   const toggleMember = (role, name) => {
     const updated = { ...current }
-    if (updated[role] === name) {
-      delete updated[role]
-    } else {
-      updated[role] = name
-    }
-    onUpdate(assignmentKey, updated, { role, member: updated[role] || null })
+    const selected = assignmentRoleMembers(current, role)
+    const membersForRole = selected.includes(name) ? selected.filter((member) => member !== name) : [...selected, name]
+    if (membersForRole.length) updated[role] = membersForRole
+    else delete updated[role]
+    onUpdate(assignmentKey, updated, { role, members: membersForRole })
   }
 
   const allMembers = members
-  const hasAssignment = ROLES.some((r) => current[r])
+  const hasAssignment = ROLES.some((role) => assignmentRoleMembers(current, role).length)
 
   const popupContent = (
     <PopupContent
@@ -204,23 +204,21 @@ export default function AssignTeam({ displayName, assignmentKey, legacyKey, assi
       >
         {hasAssignment ? (
           <div className="flex items-center -space-x-1">
-            {ROLES.map((role) => {
-              const name = current[role]
-              if (!name) return null
-              const member = allMembers.find((m) => m.name === name)
+            {ROLES.flatMap((role) => assignmentRoleMembers(current, role).map((name) => {
+              const member = allMembers.find((candidate) => candidate.name === name)
               if (!member) return null
               const rc = ROLE_CONFIG[role]
               const initial = member.name[0].toUpperCase()
               const size = compact ? rc.xsSizeClass : rc.smSizeClass
               const text = compact ? rc.xsTextClass : rc.smTextClass
               return member.avatar ? (
-                <img key={role} src={member.avatar} alt={member.name} className={`${size} rounded-full object-cover ring-1 ${rc.ring} ring-offset-1`} />
+                <img key={`${role}:${name}`} src={member.avatar} alt={member.name} className={`${size} rounded-full object-cover ring-1 ${rc.ring} ring-offset-1`} />
               ) : (
-                <span key={role} className={`${size} ${text} ${rc.bg} rounded-full ring-1 ${rc.ring} ring-offset-1 flex items-center justify-center font-bold`}>
+                <span key={`${role}:${name}`} title={`${ROLE_CONFIG[role].label}: ${name}`} className={`${size} ${text} ${rc.bg} rounded-full ring-1 ${rc.ring} ring-offset-1 flex items-center justify-center font-bold`}>
                   {initial}
                 </span>
               )
-            })}
+            }))}
           </div>
         ) : (
           <span className={`flex items-center gap-1 ${compact ? "text-[9px]" : "text-[10px]"} text-purple-300 hover:text-purple-500`}>
@@ -253,13 +251,13 @@ export default function AssignTeam({ displayName, assignmentKey, legacyKey, assi
               {/* Done button */}
               <div className="flex items-center justify-between mb-1">
                 <div className="text-xs font-bold uppercase tracking-wider text-purple-400">
-                  Assign Team — {displayName}
+                  <Emoji name="assign" /> Assign Team — {displayName}
                 </div>
                 <button
                   onClick={(e) => { e.stopPropagation(); setShowPopup(false) }}
                   className="rounded-lg bg-purple-100 px-3 py-1 text-xs font-bold text-purple-600 active:bg-purple-200"
                 >
-                  Done
+                  <Emoji name="done" /> Done
                 </button>
               </div>
 
@@ -278,7 +276,7 @@ export default function AssignTeam({ displayName, assignmentKey, legacyKey, assi
                         <MemberOption
                           key={m.name}
                           member={m}
-                          isSelected={current[role] === m.name}
+                          isSelected={assignmentRoleMembers(current, role).includes(m.name)}
                           onToggle={(name) => toggleMember(role, name)}
                         />
                       ))}

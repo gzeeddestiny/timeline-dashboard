@@ -3,6 +3,8 @@ import { buildFileColorMap } from "../lib/sheetsApi"
 import { taskKey as sharedTaskKey } from "../lib/sharedState"
 import { daysFrom } from "../lib/dates"
 import AssignTeam from "./AssignTeam"
+import Emoji from "./Emoji"
+import { emojiText } from "../lib/uiEmoji"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -129,8 +131,8 @@ function overdueConfig(absDays) {
 
 function DaysLateCell({ dueDate, done, compact }) {
   const pad = compact ? "px-6 py-2.5" : "px-6 py-4"
-  if (!dueDate) return <td className={`${pad} text-gray-300`}>—</td>
-  if (done)     return <td className={pad}><span className="text-xs font-medium text-gray-400">Done</span></td>
+  if (!dueDate) return <td className={`${pad} text-gray-300`}><Emoji name="unscheduled" /> —</td>
+  if (done)     return <td className={pad}><span className="text-xs font-medium text-gray-400"><Emoji name="done" /> Done</span></td>
 
   const days = daysFromToday(dueDate)
   if (days === null) return <td className={`${pad} text-gray-300`}>—</td>
@@ -140,7 +142,7 @@ function DaysLateCell({ dueDate, done, compact }) {
     return (
       <td className={pad}>
         <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${cls}`}>
-          <span>{Math.abs(days)} days late</span><span className="text-[9px] uppercase opacity-70">{label}</span>
+          <span><Emoji name="overdue" /> {Math.abs(days)} days late</span><span className="text-[9px] uppercase opacity-70">{label}</span>
         </span>
       </td>
     )
@@ -148,7 +150,7 @@ function DaysLateCell({ dueDate, done, compact }) {
   if (days === 0) return (
     <td className={pad}>
       <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-600">
-        <span>Due today</span>
+        <span><Emoji name="dueToday" /> Due today</span>
       </span>
     </td>
   )
@@ -165,10 +167,10 @@ function DaysLateCell({ dueDate, done, compact }) {
 }
 
 const WORKFLOW_OPTIONS = [
-  ["not_started", "Not started"],
-  ["in_progress", "In progress"],
-  ["waiting_client", "Waiting client"],
-  ["blocked", "Blocked"],
+  ["not_started", emojiText("notStarted", "Not started")],
+  ["in_progress", emojiText("inProgress", "In progress")],
+  ["waiting_client", emojiText("waitingClient", "Waiting client")],
+  ["blocked", emojiText("blocked", "Blocked")],
 ]
 
 function WorkflowCell({ task, workflow, onUpdate, saveStatus, compact, editable = true }) {
@@ -176,7 +178,7 @@ function WorkflowCell({ task, workflow, onUpdate, saveStatus, compact, editable 
   const value = workflow[key] || "not_started"
   return (
     <td className={compact ? "px-3 py-2.5" : "px-3 py-4"} onClick={(event) => event.stopPropagation()}>
-      {task.done ? <span className="text-xs font-semibold text-green-600">Done</span> : (
+      {task.done ? <span className="text-xs font-semibold text-green-600"><Emoji name="done" /> Done</span> : (
         <div className="flex items-center gap-1">
           <select
             value={value}
@@ -187,7 +189,7 @@ function WorkflowCell({ task, workflow, onUpdate, saveStatus, compact, editable 
             {WORKFLOW_OPTIONS.map(([option, label]) => <option key={option} value={option}>{label}</option>)}
           </select>
           {saveStatus === "saving" && <span className="text-[9px] text-purple-700">Saving…</span>}
-          {saveStatus === "failed" && <button type="button" onClick={() => onUpdate?.(key, value)} className="text-[9px] font-semibold text-red-500">Retry</button>}
+          {saveStatus === "failed" && <button type="button" onClick={() => onUpdate?.(key, value)} className="text-[9px] font-semibold text-red-500"><Emoji name="retry" /> Retry</button>}
         </div>
       )}
     </td>
@@ -222,7 +224,7 @@ function PriorityToggle({ taskKey, legacyKey, priorities, onUpdate, editable = t
       className={`ml-1 shrink-0 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase transition ${value === "urgent" ? "border-red-200 bg-red-50 text-red-600" : value === "high" ? "border-amber-200 bg-amber-50 text-amber-600" : "border-gray-200 bg-white text-gray-400"}`}
       title={`Priority: ${value}. Click to change.`}
     >
-      {value}
+      {value === "urgent" && <><Emoji name="urgent" /> </>}{value === "high" && <><Emoji name="high" /> </>}{value}
     </button>
   )
 }
@@ -293,14 +295,14 @@ function RemarkCell({ taskKey, legacyKey, remarks, onUpdate, saveStatus, compact
           </>
         ) : (
           <button type="button" onClick={startEdit} disabled={!editable} className="text-xs italic text-gray-400 hover:text-purple-700 disabled:cursor-default">
-            + note
+            <Emoji name="remark" /> note
           </button>
         )}
         {saveStatus === "saving" && <span className="text-[9px] text-purple-700">Saving…</span>}
-        {saveStatus === "saved" && value && <span className="text-[9px] text-green-500">Saved</span>}
+          {saveStatus === "saved" && value && <span className="text-[9px] text-green-500"><Emoji name="done" /> Saved</span>}
         {saveStatus === "failed" && (
           <button onClick={(e) => { e.stopPropagation(); onUpdate(taskKey, value) }} className="text-[9px] font-semibold text-red-500 hover:text-red-700">
-            Retry
+            <Emoji name="retry" /> Retry
           </button>
         )}
       </div>
@@ -352,13 +354,15 @@ function MobileTaskCard({ task, brandName, onOpen, onToggle, workflow, prioritie
   const key = sharedTaskKey(task)
   const priority = normalizePriority(priorities[key])
   const late = daysFromToday(task.dueDate)
+  const workflowValue = task.done ? "done" : workflow[key] || "not_started"
+  const workflowEmoji = { done: "done", not_started: "notStarted", in_progress: "inProgress", waiting_client: "waitingClient", blocked: "blocked" }[workflowValue]
   return (
     <article className={`ui-card rounded-2xl p-4 ${priority === "urgent" ? "priority-urgent border-red-200" : priority === "high" ? "priority-high border-amber-200" : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-purple-500">
             <span>{brandName}</span><span>·</span><span>{task.month || "No month"}</span>
-            {priority !== "normal" && <span className={priority === "urgent" ? "text-red-600" : "text-amber-600"}>{priority}</span>}
+            {priority !== "normal" && <span className={priority === "urgent" ? "text-red-600" : "text-amber-600"}><Emoji name={priority} /> {priority}</span>}
           </div>
           <h3 className="mt-1 text-sm font-bold text-gray-800">{task.topic}</h3>
           <p className="mt-1 text-xs text-gray-500">{task.responsibility || "ยังไม่ระบุผู้รับผิดชอบ"}</p>
@@ -366,8 +370,8 @@ function MobileTaskCard({ task, brandName, onOpen, onToggle, workflow, prioritie
         <button type="button" disabled={!editable} onClick={() => onToggle?.(task, !task.done)} aria-label={task.done ? "Mark not done" : "Mark done"} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold disabled:opacity-40 ${task.done ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}>{task.done ? "✓" : "○"}</button>
       </div>
       <div className="mt-3 flex items-center gap-2 text-[11px]">
-        <span className="rounded-full bg-white/80 px-2 py-1 font-semibold text-gray-600">{(workflow[key] || "not_started").replaceAll("_", " ")}</span>
-        <span className={late !== null && late < 0 && !task.done ? "font-bold text-red-600" : "text-gray-400"}>{task.dueDate ? late < 0 && !task.done ? `${Math.abs(late)} days late` : `Due ${fmtDate(task.dueDate)}` : "Unscheduled"}</span>
+        <span className="rounded-full bg-white/80 px-2 py-1 font-semibold text-gray-600">{emojiText(workflowEmoji, workflowValue.replaceAll("_", " "))}</span>
+        <span className={late !== null && late < 0 && !task.done ? "font-bold text-red-600" : "text-gray-400"}>{task.dueDate ? late < 0 && !task.done ? <><Emoji name="overdue" /> {Math.abs(late)} days late</> : <><Emoji name="upcoming" /> Due {fmtDate(task.dueDate)}</> : <><Emoji name="unscheduled" /> Unscheduled</>}</span>
         <button type="button" onClick={() => onOpen?.(task)} className="ui-button ui-button-primary ml-auto px-3 py-2 font-bold">รายละเอียด</button>
       </div>
     </article>
@@ -376,7 +380,7 @@ function MobileTaskCard({ task, brandName, onOpen, onToggle, workflow, prioritie
 
 // ─── TaskTable ────────────────────────────────────────────────────────────────
 
-export default function TaskTable({ title, badge, tasks, isLoading, clientStats = {}, remarks = {}, onUpdateRemark, priorities = {}, onUpdatePriority, assignments = {}, onUpdateAssignment, teamMembers = [], brandNameForTask = (task) => task.clientName, assignmentKeyForTask = (task) => task.clientName, saveStatus = {}, onToggle, onOpenTask, workflow = {}, onUpdateWorkflow, canManageAssignments = true, canEditTask = () => true }) {
+export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, clientStats = {}, remarks = {}, onUpdateRemark, priorities = {}, onUpdatePriority, assignments = {}, onUpdateAssignment, teamMembers = [], brandNameForTask = (task) => task.clientName, assignmentKeyForTask = (task) => task.clientName, saveStatus = {}, onToggle, onOpenTask, workflow = {}, onUpdateWorkflow, canManageAssignments = true, canEditTask = () => true }) {
   const [expanded, setExpanded] = useState(new Set())
   const fileColorMap = useMemo(() => buildFileColorMap(tasks), [tasks])
 
@@ -396,11 +400,11 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
     <div className="mb-6">
       <div className="mb-3 flex items-center gap-2">
         {badge && <span className={`h-2 w-2 rounded-full ${badge}`} />}
-        <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">{title}</h2>
+        <h2 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">{titleEmoji && <><Emoji name={titleEmoji} /> </>}{title}</h2>
       </div>
 
       <div className="space-y-2 sm:hidden">
-        {isLoading ? <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]">Loading…</div> : tasks.length ? tasks.map((task) => <MobileTaskCard key={sharedTaskKey(task)} task={task} brandName={brandNameForTask(task)} onOpen={onOpenTask} onToggle={onToggle} workflow={workflow} priorities={priorities} editable={canEditTask(task)} />) : <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]">No tasks found</div>}
+        {isLoading ? <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]">Loading…</div> : tasks.length ? tasks.map((task) => <MobileTaskCard key={sharedTaskKey(task)} task={task} brandName={brandNameForTask(task)} onOpen={onOpenTask} onToggle={onToggle} workflow={workflow} priorities={priorities} editable={canEditTask(task)} />) : <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]"><Emoji name="search" /> No tasks found</div>}
       </div>
 
       <div className="ui-card hidden overflow-x-auto rounded-2xl sm:block">
@@ -418,7 +422,7 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
               <th className="px-6 py-4">Due Date</th>
               <th className="px-5 py-4">Actual Submit</th>
               <th className="px-6 py-4">Days Late</th>
-              <th className="px-4 py-4">Remark</th>
+              <th className="px-4 py-4"><Emoji name="remark" /> Remark</th>
             </tr>
           </thead>
 
@@ -429,7 +433,7 @@ export default function TaskTable({ title, badge, tasks, isLoading, clientStats 
             ) : tasks.length === 0 ? (
               <tr>
                 <td colSpan={10} className="px-6 py-10 text-center text-sm text-[var(--ui-muted)]">
-                  No tasks found — sync a Google Sheet to load data
+                  <Emoji name="search" /> No tasks found — sync a Google Sheet to load data
                 </td>
               </tr>
 

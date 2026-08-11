@@ -187,18 +187,23 @@ declare
   actor_id uuid;
   actor_mail text;
 begin
-  record_key := case TG_TABLE_NAME
-    when 'task_workflow' then coalesce(new.task_key, old.task_key)
-    when 'assignments' then coalesce(new.brand_key, old.brand_key)
-    when 'brands' then coalesce(new.tab_key, old.tab_key)
-    when 'sheets' then coalesce(new.spreadsheet_id, old.spreadsheet_id)
-    when 'team_members' then coalesce(new.name, old.name)
-  end;
-  actor_id := case
-    when TG_TABLE_NAME = 'sheets' then coalesce(auth.uid(), new.created_by, old.created_by)
-    when TG_OP = 'DELETE' then coalesce(old.updated_by, auth.uid())
-    else coalesce(new.updated_by, auth.uid())
-  end;
+  if TG_TABLE_NAME = 'task_workflow' then
+    record_key := coalesce(new.task_key, old.task_key);
+  elsif TG_TABLE_NAME = 'assignments' then
+    record_key := coalesce(new.brand_key, old.brand_key);
+  elsif TG_TABLE_NAME = 'brands' then
+    record_key := coalesce(new.tab_key, old.tab_key);
+  elsif TG_TABLE_NAME = 'sheets' then
+    record_key := coalesce(new.spreadsheet_id, old.spreadsheet_id);
+    actor_id := coalesce(auth.uid(), new.created_by, old.created_by);
+  elsif TG_TABLE_NAME = 'team_members' then
+    record_key := coalesce(new.name, old.name);
+  else
+    raise exception 'Unsupported audit table: %', TG_TABLE_NAME;
+  end if;
+  if TG_TABLE_NAME <> 'sheets' then
+    actor_id := case when TG_OP = 'DELETE' then coalesce(old.updated_by, auth.uid()) else coalesce(new.updated_by, auth.uid()) end;
+  end if;
   select email into actor_mail from auth.users where id = actor_id;
   insert into public.task_events(resource, record_key, event_type, before_value, after_value, actor, actor_email)
   values (TG_TABLE_NAME, record_key, lower(TG_OP), to_jsonb(old), to_jsonb(new), actor_id, actor_mail);

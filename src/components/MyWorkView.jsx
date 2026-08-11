@@ -3,13 +3,15 @@ import TaskTable from "./TimelineTable"
 import { DEFAULT_MY_WORK_FILTERS, filterMyWorkTasks, myWorkMonths, normalizeMyWorkFilters, partitionMyWorkTasks, selectNextAction } from "../lib/workViews"
 import { daysFrom } from "../lib/dates"
 import { taskKey } from "../lib/sharedState"
+import Emoji from "./Emoji"
+import { emojiText } from "../lib/uiEmoji"
 
 const WORKFLOWS = [
   ["all", "All workflow"],
-  ["not_started", "Not started"],
-  ["in_progress", "In progress"],
-  ["waiting_client", "Waiting client"],
-  ["blocked", "Blocked"],
+  ["not_started", emojiText("notStarted", "Not started")],
+  ["in_progress", emojiText("inProgress", "In progress")],
+  ["waiting_client", emojiText("waitingClient", "Waiting client")],
+  ["blocked", emojiText("blocked", "Blocked")],
 ]
 
 export default function MyWorkView({ tasks, memberName, workflow, tableProps, preferenceOwner = "local" }) {
@@ -24,7 +26,7 @@ export default function MyWorkView({ tasks, memberName, workflow, tableProps, pr
 
   if (!memberName) return (
     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
-      <h2 className="font-bold text-amber-800">บัญชียังไม่ได้ผูกกับชื่อพนักงาน</h2>
+      <h2 className="font-bold text-amber-800"><Emoji name="warning" /> บัญชียังไม่ได้ผูกกับชื่อพนักงาน</h2>
       <p className="mt-1 text-sm text-amber-600">กรุณาให้ Admin เลือก Member ในหน้า Admin Settings</p>
     </div>
   )
@@ -32,12 +34,12 @@ export default function MyWorkView({ tasks, memberName, workflow, tableProps, pr
   const groups = partitionMyWorkTasks(filtered.active, workflow)
   const nextAction = selectNextAction(groups)
   const sections = [
-    ["Blocked", "bg-rose-500", groups.blocked],
-    ["Overdue", "bg-red-500", groups.overdue],
-    ["Due Today", "bg-amber-400", groups.today],
-    ["Next 7 Days", "bg-blue-500", groups.next7],
-    ["Later", "bg-gray-300", groups.later],
-    ["Unscheduled", "bg-slate-400", groups.unscheduled],
+    ["Blocked", "blocked", "bg-rose-500", groups.blocked],
+    ["Overdue", "overdue", "bg-red-500", groups.overdue],
+    ["Due Today", "dueToday", "bg-amber-400", groups.today],
+    ["Next 7 Days", "next7", "bg-blue-500", groups.next7],
+    ["Later", "later", "bg-gray-300", groups.later],
+    ["Unscheduled", "unscheduled", "bg-slate-400", groups.unscheduled],
   ]
   const isDefault = JSON.stringify(effectiveFilters) === JSON.stringify(DEFAULT_MY_WORK_FILTERS)
   return (
@@ -73,7 +75,7 @@ export default function MyWorkView({ tasks, memberName, workflow, tableProps, pr
           <button type="button" disabled={isDefault} onClick={() => setFilters(DEFAULT_MY_WORK_FILTERS)} className="ui-button ui-button-secondary text-xs disabled:opacity-40">Reset</button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
-          {sections.map(([label,, items]) => <span key={label} className="rounded-full bg-purple-50 px-3 py-1 text-purple-600">{label}: <strong>{items.length}</strong></span>)}
+          {sections.map(([label, emoji,, items]) => <span key={label} className="rounded-full bg-purple-50 px-3 py-1 text-purple-600"><Emoji name={emoji} /> {label}: <strong>{items.length}</strong></span>)}
         </div>
       </div>
       {nextAction && (
@@ -81,18 +83,18 @@ export default function MyWorkView({ tasks, memberName, workflow, tableProps, pr
           <span className="min-w-0">
             <span className="text-[10px] font-bold uppercase tracking-widest text-purple-200">Next Action</span>
             <span className="mt-1 block truncate text-base font-bold">{tableProps.brandNameForTask(nextAction)} · {nextAction.topic}</span>
-            <span className="mt-1 block text-xs text-purple-200">{workflow[taskKey(nextAction)] === "blocked" ? "Blocked — ต้องจัดการก่อน" : daysFrom(nextAction.dueDate) < 0 ? `${Math.abs(daysFrom(nextAction.dueDate))} days late` : nextAction.dueDate ? `Due ${nextAction.dueDate}` : "ยังไม่มีกำหนดส่ง"}</span>
+            <span className="mt-1 block text-xs text-purple-200">{workflow[taskKey(nextAction)] === "blocked" ? <><Emoji name="blocked" /> Blocked — ต้องจัดการก่อน</> : daysFrom(nextAction.dueDate) < 0 ? <><Emoji name="overdue" /> {Math.abs(daysFrom(nextAction.dueDate))} days late</> : nextAction.dueDate ? <><Emoji name="upcoming" /> Due {nextAction.dueDate}</> : <><Emoji name="unscheduled" /> ยังไม่มีกำหนดส่ง</>}</span>
           </span>
           <span className="shrink-0 rounded-lg bg-white/15 px-3 py-2 text-xs font-bold">เปิดรายละเอียด</span>
         </button>
       )}
-      {sections.map(([title, badge, sectionTasks]) => sectionTasks.length > 0 && (
-        <TaskTable key={title} {...tableProps} title={title} badge={badge} tasks={sectionTasks} workflow={workflow} />
+      {sections.map(([title, emoji, badge, sectionTasks]) => sectionTasks.length > 0 && (
+        <TaskTable key={title} {...tableProps} title={title} titleEmoji={emoji} badge={badge} tasks={sectionTasks} workflow={workflow} />
       ))}
-      {filters.showCompleted && filtered.completed.length > 0 && <TaskTable {...tableProps} title="Completed" badge="bg-green-500" tasks={filtered.completed} workflow={workflow} />}
+      {filters.showCompleted && filtered.completed.length > 0 && <TaskTable {...tableProps} title="Completed" titleEmoji="done" badge="bg-green-500" tasks={filtered.completed} workflow={workflow} />}
       {Object.values(groups).every((items) => items.length === 0) && (!filters.showCompleted || filtered.completed.length === 0) && (
         <div className="rounded-2xl border border-green-100 bg-green-50 p-10 text-center text-sm font-semibold text-green-600">
-          {tasks.length ? "ไม่พบงานตามตัวกรอง" : "ไม่มีงานค้าง"}
+          {tasks.length ? <><Emoji name="search" /> ไม่พบงานตามตัวกรอง</> : <><Emoji name="celebration" /> ไม่มีงานค้าง</>}
         </div>
       )}
     </div>

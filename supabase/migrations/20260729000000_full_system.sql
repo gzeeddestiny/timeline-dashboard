@@ -177,7 +177,7 @@ create table if not exists public.email_outbox (
 );
 
 create or replace function private.current_email()
-returns text language sql stable as $$
+returns text language sql stable set search_path = '' as $$
   select lower(coalesce(auth.jwt() ->> 'email', ''))
 $$;
 

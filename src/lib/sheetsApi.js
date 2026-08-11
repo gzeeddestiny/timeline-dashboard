@@ -15,7 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { bangkokDate, daysFrom, parseSheetDate } from "./dates.js"
-import { inspectTaskHeaders, taskRange } from "./sheetSchema.js"
+import { columnName, findTaskHeaderRow, isSecondaryScheduleHeader, taskRange } from "./sheetSchema.js"
 
 const BASE_URL = "https://sheets.googleapis.com/v4/spreadsheets"
 
@@ -184,6 +184,7 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
       .map((t) => ({
         title: t.properties.title,
         gid:   t.properties.sheetId,
+        taskIdColumn: columnName(t.properties.gridProperties?.columnCount || 26),
       }))
     const tabNames = tabInfos.map((t) => t.title)
     if (tabNames.length === 0) continue
@@ -195,7 +196,10 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
       gidMap.set(info.title.trim(), info.gid)
     }
 
-    const ranges = tabNames.map((title) => `ranges=${encodeURIComponent(taskRange(title))}`).join("&")
+    const ranges = [
+      ...tabInfos.map(({ title }) => taskRange(title)),
+      ...tabInfos.map(({ title, taskIdColumn }) => taskRange(title, `${taskIdColumn}1:${taskIdColumn}`)),
+    ].map((range) => `ranges=${encodeURIComponent(range)}`).join("&")
     const batchUrl = `${BASE_URL}/${encodeURIComponent(spreadsheetId)}/values:batchGet?${ranges}&key=${encodeURIComponent(apiKey)}&valueRenderOption=UNFORMATTED_VALUE`
 
     const batchRes = await fetch(batchUrl, { signal: AbortSignal.timeout(15_000) })
@@ -206,49 +210,39 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
       throw new Error(`Google Sheets batchGet failed for "${spreadsheetTitle}": ${batchData.error.message}`)
     }
 
-    for (const valueRange of batchData.valueRanges ?? []) {
-      // Parse tab name from the response range string (authoritative source)
-      // e.g. "'(Point+RK)One box main 3 clips Jan 26'!A2:E50" → "(Point+RK)One box main 3 clips Jan 26"
-      const rangeStr = valueRange.range || ""
-      let parsedTab = rangeStr.replace(/!.*$/, "")
-      if (parsedTab.startsWith("'") && parsedTab.endsWith("'")) {
-        parsedTab = parsedTab.slice(1, -1).replace(/''/g, "'")
-      }
-
-      const tabTitle = parsedTab
-      // Look up gid from metadata: exact → trimmed → NFC-normalized fallback
-      let tabGid = gidMap.get(tabTitle)
-      if (tabGid === undefined) tabGid = gidMap.get(tabTitle.trim())
-      if (tabGid === undefined) {
-        const norm = tabTitle.normalize("NFC").trim()
-        const match = tabInfos.find((t) => t.title.normalize("NFC").trim() === norm)
-        tabGid = match?.gid ?? 0
-      }
-
-      const values = valueRange.values ?? []
-      const header = inspectTaskHeaders(values[0])
-      if (!header.valid) {
-        issues.push({ spreadsheetId, sheetGid: tabGid, rowIndex: 1, clientName: tabTitle, type: "skipped_tab", message: "Header A:E does not match the task schema" })
+    for (const [tabIndex, tab] of tabInfos.entries()) {
+      const tabTitle = tab.title
+      const tabGid = gidMap.get(tabTitle) ?? tab.gid
+      const values = batchData.valueRanges?.[tabIndex]?.values ?? []
+      const taskIds = batchData.valueRanges?.[tabInfos.length + tabIndex]?.values ?? []
+      const headerRowIndex = findTaskHeaderRow(values)
+      if (headerRowIndex < 0) {
+        issues.push({ spreadsheetId, sheetGid: tabGid, rowIndex: 1, clientName: tabTitle, type: "skipped_tab", message: "Task header was not found in rows 1–15" })
         continue
       }
-      if (!header.taskIdAvailable) {
-        issues.push({ spreadsheetId, sheetGid: tabGid, rowIndex: 1, clientName: tabTitle, type: "invalid_task_id_header", message: "Column F is already used" })
+      if (String(taskIds[headerRowIndex]?.[0] || "").trim().toLowerCase() !== "task id") {
+        issues.push({ spreadsheetId, sheetGid: tabGid, rowIndex: headerRowIndex + 1, clientName: tabTitle, type: "invalid_task_id_header", message: "Task ID column is not provisioned" })
         continue
       }
 
-      for (const [rowIdx, row] of values.slice(1).entries()) {
+      for (let rowIdx = headerRowIndex + 1; rowIdx < values.length; rowIdx += 1) {
+        const row = values[rowIdx]
+        // Some tabs append a separate publishing calendar after the timeline.
+        // It uses Post Date/Status columns and must not be counted as task rows.
+        if (isSecondaryScheduleHeader(row)) break
         // A=status(bool)  B=topic  C=responsibility  D=dueDate  E=actualSubmit
-        const [statusRaw, topic, responsibility, dueDateRaw, actualSubmitRaw, taskIdRaw] = row
+        const [statusRaw, topic, responsibility, dueDateRaw, actualSubmitRaw] = row
 
         if (!topic?.toString().trim()) continue   // skip blank rows
+        if ((statusRaw === "" || statusRaw == null) && !String(responsibility || "").trim() && !dueDateRaw && !actualSubmitRaw) continue
 
         const done =
           statusRaw === true ||
           statusRaw === 1 ||
           String(statusRaw).toLowerCase() === "true"
 
-        const taskId = String(taskIdRaw || "").trim()
-        const source = { spreadsheetId, sheetGid: tabGid, rowIndex: rowIdx + 2, clientName: tabTitle }
+        const taskId = String(taskIds[rowIdx]?.[0] || "").trim()
+        const source = { spreadsheetId, sheetGid: tabGid, rowIndex: rowIdx + 1, clientName: tabTitle }
         if (!taskId) {
           issues.push({ ...source, type: "missing_task_id", message: "Task ID is blank" })
           continue
@@ -278,7 +272,7 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
           topic:          topic.toString().trim(),
           responsibility: (responsibility ?? "").toString().trim(),
           dueDate:        parsedDate,
-          rowIndex:       rowIdx + 2,  // +2: range starts at row 2 (row 1 = header)
+          rowIndex:       rowIdx + 1,
           sheetGid:       tabGid,
           taskId,
           actualSubmit:   parsedActualSubmit,

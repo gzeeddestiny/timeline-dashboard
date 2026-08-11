@@ -1,4 +1,3 @@
-const TASK_ID_COLUMN = 6;
 const TASK_ID_HEADER = "Task ID";
 
 function validTaskId(value) {
@@ -22,14 +21,32 @@ function doPost(event) {
   }
 }
 
+function normalizeHeader(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function validateTaskSheet(sheet) {
-  const expected = ["done", "topic", "responsibility", "due date", "actual submit"];
-  const headers = sheet.getRange(1, 1, 1, 5).getDisplayValues()[0].map(function (value) {
-    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const rowCount = Math.min(15, Math.max(1, sheet.getLastRow()));
+  const rows = sheet.getRange(1, 1, rowCount, 4).getDisplayValues();
+  const index = rows.findIndex(function (row) {
+    const headers = row.map(normalizeHeader);
+    return (headers[0] === "" || headers[0] === "done")
+      && (headers[1] === "topic" || headers[1] === "description")
+      && headers[2] === "responsibility"
+      && headers[3] === "due date";
   });
-  if (expected.some(function (value, index) { return headers[index] !== value; })) {
-    throw new Error('Invalid task headers in "' + sheet.getName() + '". Expected Done, Topic, Responsibility, Due Date, Actual Submit.');
-  }
+  if (index < 0) throw new Error('Task header was not found in rows 1-15 of "' + sheet.getName() + '".');
+  return index + 1;
+}
+
+function taskIdColumn(sheet, headerRow, create) {
+  const maxColumns = sheet.getMaxColumns();
+  const headers = sheet.getRange(headerRow, 1, 1, maxColumns).getDisplayValues()[0];
+  const existing = headers.findIndex(function (value) { return normalizeHeader(value) === "task id"; });
+  if (existing >= 0) return existing + 1;
+  if (!create) throw new Error("Task ID header is missing");
+  sheet.insertColumnAfter(maxColumns);
+  return maxColumns + 1;
 }
 
 function ensureTaskIds(targets) {
@@ -48,18 +65,19 @@ function ensureTaskIds(targets) {
       const selected = spreadsheet.getSheets().filter(function (sheet) { return allowed[String(sheet.getSheetId())]; });
       if (selected.length !== target.sheetGids.length) throw new Error("One or more selected tabs were not found");
       selected.forEach(function (sheet) {
-        validateTaskSheet(sheet);
+        const headerRow = validateTaskSheet(sheet);
         const lastRow = sheet.getLastRow();
-        if (lastRow < 1) return;
-        const taskIdHeader = String(sheet.getRange(1, TASK_ID_COLUMN).getDisplayValue() || "").trim();
-        if (taskIdHeader && taskIdHeader !== TASK_ID_HEADER) throw new Error('Column F is already used in "' + sheet.getName() + '"');
-        if (!taskIdHeader) sheet.getRange(1, TASK_ID_COLUMN).setValue(TASK_ID_HEADER);
-        if (lastRow === 1) return;
-        const topics = sheet.getRange(2, 2, lastRow - 1, 1).getDisplayValues();
-        const ids = sheet.getRange(2, TASK_ID_COLUMN, lastRow - 1, 1).getDisplayValues();
+        const idColumn = taskIdColumn(sheet, headerRow, true);
+        sheet.getRange(headerRow, idColumn).setValue(TASK_ID_HEADER);
+        if (lastRow <= headerRow) return;
+        const rowCount = lastRow - headerRow;
+        const taskValues = sheet.getRange(headerRow + 1, 1, rowCount, 5).getDisplayValues();
+        const ids = sheet.getRange(headerRow + 1, idColumn, rowCount, 1).getDisplayValues();
         const seen = {};
         ids.forEach(function (row, index) {
-          if (!String(topics[index][0] || "").trim()) return;
+          const task = taskValues[index];
+          if (!String(task[1] || "").trim()) return;
+          if (!String(task[0] || "").trim() && !String(task[2] || "").trim() && !String(task[3] || "").trim() && !String(task[4] || "").trim()) return;
           let taskId = String(row[0] || "").trim();
           if (!validTaskId(taskId) || seen[taskId]) {
             taskId = Utilities.getUuid();
@@ -68,8 +86,8 @@ function ensureTaskIds(targets) {
           }
           seen[taskId] = true;
         });
-        sheet.getRange(2, TASK_ID_COLUMN, lastRow - 1, 1).setValues(ids);
-        if (!sheet.isColumnHiddenByUser(TASK_ID_COLUMN)) sheet.hideColumns(TASK_ID_COLUMN);
+        sheet.getRange(headerRow + 1, idColumn, rowCount, 1).setValues(ids);
+        if (!sheet.isColumnHiddenByUser(idColumn)) sheet.hideColumns(idColumn);
       });
     });
     return { success: true, updated: updated };
@@ -85,17 +103,17 @@ function setCompletion(body) {
   const spreadsheet = SpreadsheetApp.openById(body.spreadsheetId);
   const sheet = spreadsheet.getSheets().find(function (item) { return item.getSheetId() === body.sheetGid; });
   if (!sheet) throw new Error("Sheet tab not found");
-  validateTaskSheet(sheet);
-  if (String(sheet.getRange(1, TASK_ID_COLUMN).getDisplayValue() || "").trim() !== TASK_ID_HEADER) throw new Error("Task ID header is missing");
+  const headerRow = validateTaskSheet(sheet);
+  const idColumn = taskIdColumn(sheet, headerRow, false);
   if (!validTaskId(body.taskId)) throw new Error("Invalid Task ID");
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) throw new Error("Task not found");
-  const ids = sheet.getRange(2, TASK_ID_COLUMN, lastRow - 1, 1).getDisplayValues();
+  if (lastRow <= headerRow) throw new Error("Task not found");
+  const ids = sheet.getRange(headerRow + 1, idColumn, lastRow - headerRow, 1).getDisplayValues();
   const matches = [];
   ids.forEach(function (row, index) { if (String(row[0]).trim() === body.taskId) matches.push(index); });
   if (matches.length !== 1) throw new Error(matches.length ? "Duplicate Task ID" : "Task not found");
   const offset = matches[0];
-  const row = offset + 2;
+  const row = offset + headerRow + 1;
   sheet.getRange(row, 1).setValue(body.done);
   sheet.getRange(row, 5).setValue(body.actualSubmit || "");
   return { success: true, rowIndex: row };

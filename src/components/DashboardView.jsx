@@ -6,6 +6,8 @@ import { normalizeBrandKey, tabKey, taskKey } from "../lib/sharedState"
 import { bangkokDate, daysFrom } from "../lib/dates"
 import { sortMonthLabels } from "../lib/workViews"
 import AssignTeam from "./AssignTeam"
+import Emoji from "./Emoji"
+import { emojiText } from "../lib/uiEmoji"
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -449,7 +451,7 @@ function MemberCard({ member, stats, maxOverdue, onOpen }) {
           <div className="flex items-center gap-3 mt-2 text-[10px] font-medium">
             {stats.done > 0 && <span className="text-green-600">✓ {stats.done} done</span>}
             {stats.pending > 0 && <span className="text-purple-500">{stats.pending} pending</span>}
-            {stats.overdue > 0 && <span className="text-red-500">⚠ {stats.overdue} overdue</span>}
+            {stats.overdue > 0 && <span className="text-red-500"><Emoji name="overdue" /> {stats.overdue} overdue</span>}
           </div>
           {/* Client badges */}
           {stats.clients.length > 0 && (
@@ -463,7 +465,7 @@ function MemberCard({ member, stats, maxOverdue, onOpen }) {
           )}
         </>
       ) : (
-        <div className="text-[11px] text-gray-300 mt-1">ไม่มีงาน</div>
+        <div className="text-[11px] text-gray-300 mt-1"><Emoji name="celebration" /> ไม่มีงาน</div>
       )}
     </button>
   )
@@ -727,7 +729,7 @@ function DeadlineRoadmap({ allTasks, brandNameForTask, assignedNames, onOpenTask
   }, [isDragging, handleMouseMove, handleMouseUp])
 
   if (tasks.length === 0) {
-    return <div className="text-center py-8 text-sm text-gray-300">ไม่มีข้อมูลสำหรับแสดง Timeline</div>
+    return <div className="text-center py-8 text-sm text-gray-300"><Emoji name="search" /> ไม่มีข้อมูลสำหรับแสดง Timeline</div>
   }
 
   const ROW_HEIGHT = 32
@@ -904,7 +906,7 @@ function RecentActivity({ events, tasks }) {
   return (
     <div className="ui-card rounded-2xl p-5">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Recent Activity</h3>
+        <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="activity" /> Recent Activity</h3>
         <span className="text-[10px] text-gray-400">who changed what and when</span>
       </div>
       {events.length ? <div className="mt-3 divide-y divide-gray-50">
@@ -918,7 +920,7 @@ function RecentActivity({ events, tasks }) {
             <time className="shrink-0 text-[10px] text-gray-400">{new Date(event.created_at).toLocaleString("th-TH")}</time>
           </div>
         ))}
-      </div> : <p className="mt-4 text-xs text-gray-400">Activity appears after the first saved change.</p>}
+      </div> : <p className="mt-4 text-xs text-gray-400"><Emoji name="inbox" /> Activity appears after the first saved change.</p>}
     </div>
   )
 }
@@ -1159,14 +1161,14 @@ export default function DashboardView({
           Status
           <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} className="ui-field ml-1.5 min-h-0 px-2.5 py-1.5 text-xs text-gray-700">
             <option value="all">All</option>
-            <option value="overdue">Overdue</option>
-            <option value="upcoming">Upcoming</option>
-            <option value="done">Done</option>
-            <option value="not_started">Not started</option>
-            <option value="in_progress">In progress</option>
-            <option value="waiting_client">Waiting client</option>
-            <option value="blocked">Blocked</option>
-            <option value="unscheduled">Unscheduled</option>
+            <option value="overdue">{emojiText("overdue", "Overdue")}</option>
+            <option value="upcoming">{emojiText("upcoming", "Upcoming")}</option>
+            <option value="done">{emojiText("done", "Done")}</option>
+            <option value="not_started">{emojiText("notStarted", "Not started")}</option>
+            <option value="in_progress">{emojiText("inProgress", "In progress")}</option>
+            <option value="waiting_client">{emojiText("waitingClient", "Waiting client")}</option>
+            <option value="blocked">{emojiText("blocked", "Blocked")}</option>
+            <option value="unscheduled">{emojiText("unscheduled", "Unscheduled")}</option>
           </select>
         </label>
         <label className="text-[10px] font-semibold text-gray-500">
@@ -1195,10 +1197,10 @@ export default function DashboardView({
 
       <div className={`rounded-2xl border p-4 text-xs ${syncStatus?.status === "failed" ? "border-red-200 bg-red-50" : syncStatus?.status === "running" ? "border-amber-200 bg-amber-50" : "border-purple-100 bg-white"}`}>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <strong className="uppercase tracking-wider text-purple-700">Data Health</strong>
+          <strong className="uppercase tracking-wider text-purple-700"><Emoji name="dataHealth" /> Data Health</strong>
           <span>Status: <strong>{syncStatus?.status || "not synced"}</strong></span>
           <span>Source tasks: <strong>{syncStatus?.task_count ?? allTasks.length}</strong></span>
-          <button type="button" onClick={() => openDrilldown("Unscheduled", unscheduled)} className="min-h-11 underline decoration-purple-200 underline-offset-2 sm:min-h-0">Unscheduled: <strong>{unscheduled.length}</strong></button>
+          <button type="button" onClick={() => openDrilldown("Unscheduled", unscheduled)} className="min-h-11 underline decoration-purple-200 underline-offset-2 sm:min-h-0"><Emoji name="unscheduled" /> Unscheduled: <strong>{unscheduled.length}</strong></button>
           <span>Invalid rows: <strong>{syncStatus?.invalid_row_count || 0}</strong></span>
           <span>Skipped tabs: <strong>{syncStatus?.issues?.filter((issue) => issue.type === "skipped_tab").length || 0}</strong></span>
         </div>
@@ -1236,7 +1238,7 @@ export default function DashboardView({
           sub="Requires intervention"
           onClick={() => openDrilldown("Blocked", blocked)}
           color={{ bg: "bg-rose-50", border: "border-rose-200", iconBg: "bg-rose-100", text: "text-rose-700" }}
-          icon={<span className="text-lg font-black text-rose-600">!</span>}
+          icon={<span className="text-lg"><Emoji name="blocked" /></span>}
         />
 
         <StatCard
@@ -1245,7 +1247,7 @@ export default function DashboardView({
           sub="Pending external response"
           onClick={() => openDrilldown("Waiting Client", waitingClient)}
           color={{ bg: "bg-amber-50", border: "border-amber-200", iconBg: "bg-amber-100", text: "text-amber-700" }}
-          icon={<span className="text-lg font-black text-amber-600">…</span>}
+          icon={<span className="text-lg"><Emoji name="waitingClient" /></span>}
         />
 
         <StatCard
@@ -1327,13 +1329,13 @@ export default function DashboardView({
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="ui-card rounded-2xl p-5">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Overdue Aging</h3>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="aging" /> Overdue Aging</h3>
           <div className="mt-4 grid grid-cols-4 gap-2">
             {Object.entries(aging).map(([label, count]) => <button key={label} onClick={() => openDrilldown(`Overdue ${label} days`, agingTasks(label))} className="rounded-xl bg-red-50 p-3 text-center transition hover:bg-red-100"><div className="text-xl font-black text-red-600">{count}</div><div className="text-[10px] text-red-400">{label} days</div></button>)}
           </div>
         </div>
         <div className="ui-card rounded-2xl p-5">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">12-Month Trend</h3>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="trend" /> 12-Month Trend</h3>
           {monthlyTrend.length ? <div className="mt-3 overflow-x-auto"><table className="w-full text-[10px]"><thead className="text-left text-gray-400"><tr><th>Month</th><th>Completion</th><th>Created</th><th>Resolved</th><th>Blocked</th><th>{filters.status === "all" ? "Workload" : filters.status.replaceAll("_", " ")}</th></tr></thead><tbody>{monthlyTrend.map(([month, row]) => { const metrics = row.metrics || {}; const completion = metrics.total ? Math.round((metrics.done / metrics.total) * 100) : 0; return <tr key={month} className="border-t border-gray-50"><td className="py-1.5 font-semibold text-gray-600">{month}</td><td>{completion}%</td><td>{metrics.overdueCreated || 0}</td><td>{metrics.overdueResolved || 0}</td><td>{metrics.blocked || 0}</td><td>{trendCount(metrics, filters.status)}</td></tr> })}</tbody></table><p className="mt-2 text-[9px] text-gray-300">Historical snapshot metrics; task-level history is not available.</p></div> : <p className="mt-4 text-xs text-gray-400">Trend starts after the first successful sync.</p>}
         </div>
       </div>
@@ -1345,7 +1347,7 @@ export default function DashboardView({
         <div className="px-5 py-4 border-b border-purple-50">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-purple-400" />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Deadline Roadmap</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="roadmap" /> Deadline Roadmap</h3>
           </div>
         </div>
         <div className="p-3 relative">
@@ -1367,7 +1369,7 @@ export default function DashboardView({
           <div className="px-5 py-4 border-b border-purple-50">
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-purple-400" />
-              <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Client Health</h3>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="clientHealth" /> Client Health</h3>
               <span className="text-[10px] text-gray-400 ml-1">{clientHealth.length} active</span>
             </div>
           </div>
@@ -1413,7 +1415,7 @@ export default function DashboardView({
                 )}
               </>
             ) : (
-              <div className="text-center py-8 text-sm text-gray-300">ไม่มี active clients</div>
+              <div className="text-center py-8 text-sm text-gray-300"><Emoji name="search" /> ไม่มี active clients</div>
             )}
           </div>
         </div>
@@ -1443,7 +1445,7 @@ export default function DashboardView({
               </div>
             ) : (
               <div className="text-center py-8">
-                <div className="mt-1 text-sm text-gray-400">No overdue tasks</div>
+                <div className="mt-1 text-sm text-gray-400"><Emoji name="celebration" /> No overdue tasks</div>
               </div>
             )}
           </div>
@@ -1455,7 +1457,7 @@ export default function DashboardView({
         <div className="px-5 py-4 border-b border-purple-50">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-purple-400" />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Team Workload</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="team" /> Team Workload</h3>
             <span className="text-[10px] text-gray-400 ml-1">{teamMembers.length} members</span>
           </div>
         </div>
@@ -1483,7 +1485,7 @@ export default function DashboardView({
         <div className="px-5 py-4 border-b border-purple-50">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-amber-400" />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]">Upcoming</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="upcoming" /> Upcoming</h3>
             <span className="text-[10px] text-gray-400 ml-1">{upcoming.length} tasks</span>
           </div>
         </div>
@@ -1495,7 +1497,7 @@ export default function DashboardView({
               </div>
             ))
           ) : (
-            <div className="text-center py-6 text-sm text-gray-300">ไม่มีงาน upcoming</div>
+            <div className="text-center py-6 text-sm text-gray-300"><Emoji name="celebration" /> ไม่มีงาน upcoming</div>
           )}
           {upcoming.length > upcomingLimit && <button type="button" onClick={() => setUpcomingLimit((value) => value + 50)} className="ui-button ui-button-secondary mx-auto block text-xs">Show 50 more</button>}
         </div>

@@ -41,7 +41,7 @@ function taskRow(task, syncedAt) {
 
 export function taskIdRepairTargets(issues) {
   const targets = new Map()
-  for (const issue of issues.filter((item) => ["missing_task_id", "duplicate_task_id", "invalid_task_id"].includes(item.type))) {
+  for (const issue of issues.filter((item) => ["missing_task_id", "duplicate_task_id", "invalid_task_id", "invalid_task_id_header"].includes(item.type))) {
     if (!targets.has(issue.spreadsheetId)) targets.set(issue.spreadsheetId, new Set())
     targets.get(issue.spreadsheetId).add(Number(issue.sheetGid))
   }

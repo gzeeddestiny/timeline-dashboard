@@ -23,7 +23,7 @@ where jobname in (
 
 select cron.schedule(
   'timeline-dashboard-sync',
-  '*/30 * * * *',
+  '0 */3 * * *',
   $$
     select net.http_post(
       url := (select decrypted_secret from vault.decrypted_secrets where name = 'timeline_dashboard_url') || '/api/cron-sync',

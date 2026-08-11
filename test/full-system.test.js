@@ -15,8 +15,8 @@ import { bangkokDate, daysFrom, parseSheetDate, validIsoDate } from "../src/lib/
 import { fetchAllRows } from "../src/lib/supabasePages.js"
 import { fetchAllSheetsData } from "../src/lib/sheetsApi.js"
 import { cachePendingWrites, loadPendingWrites, mergeRemote, taskSheetUrl } from "../src/lib/sharedState.js"
-import { inspectTaskHeaders, taskRange } from "../src/lib/sheetSchema.js"
-import { responsibilityMentions, taskOwnerNames } from "../src/lib/teamConfig.js"
+import { columnName, findTaskHeaderRow, inspectTaskHeaders, isSecondaryScheduleHeader, taskRange } from "../src/lib/sheetSchema.js"
+import { assignmentMemberNames, assignmentRoleMembers, findMemberByName, responsibilityMentions, taskOwnerNames } from "../src/lib/teamConfig.js"
 import { filterMyWorkTasks, myWorkMonths, normalizeMyWorkFilters, partitionMyWorkTasks, selectNextAction } from "../src/lib/workViews.js"
 
 const tasks = [
@@ -49,12 +49,13 @@ test("workflow RPC patches only fields present in the request", () => {
 })
 
 test("assignment RPC updates one role without replacing the whole object", () => {
-  assert.equal(validateAssignmentPatch({ key: "nike", role: "pm", member: "Tony" }), null)
-  assert.equal(validateAssignmentPatch({ key: "nike", role: "unknown", member: "Tony" }), "Invalid assignment role")
-  assert.deepEqual(assignmentRpcArgs({ key: " nike ", role: "pm", member: null }, "actor"), {
+  assert.equal(validateAssignmentPatch({ key: "nike", role: "creative", members: ["Tony", "Aom"] }), null)
+  assert.equal(validateAssignmentPatch({ key: "nike", role: "unknown", members: ["Tony"] }), "Invalid assignment role")
+  assert.equal(validateAssignmentPatch({ key: "nike", role: "pm", members: ["Tony", "tony"] }), "Duplicate assignment member")
+  assert.deepEqual(assignmentRpcArgs({ key: " nike ", role: "pm", members: [] }, "actor"), {
     p_brand_key: "nike",
     p_role: "pm",
-    p_member: null,
+    p_members: [],
     p_clear: false,
     p_actor: "actor",
   })
@@ -85,10 +86,24 @@ test("uses assignment and responsibility ownership", () => {
   assert.deepEqual(taskOwnerNames(tasks[1], members, { lead: "May" }), ["May"])
 })
 
+test("supports multiple assignees per role and legacy single names", () => {
+  const assignment = { creative: ["AOM", "PLENG"], ae: "TONY" }
+  assert.deepEqual(assignmentRoleMembers(assignment, "creative"), ["AOM", "PLENG"])
+  assert.deepEqual(assignmentRoleMembers(assignment, "ae"), ["TONY"])
+  assert.deepEqual(assignmentMemberNames(assignment), ["AOM", "PLENG", "TONY"])
+  assert.deepEqual(taskOwnerNames({ responsibility: "" }, [], assignment), ["AOM", "PLENG", "TONY"])
+})
+
 test("matches responsibility names on Unicode-aware boundaries", () => {
   assert.equal(responsibilityMentions("May / Tony", "May"), true)
   assert.equal(responsibilityMentions("Maya / Tony", "May"), false)
   assert.equal(responsibilityMentions("ดูแลโดย เมย์ และ Aom", "เมย์"), true)
+})
+
+test("matches an existing timeline member without creating a case variant", () => {
+  const members = [{ name: "Maya", role: "creative", avatar: "photo" }]
+  assert.equal(findMemberByName(members, "  maya "), members[0])
+  assert.equal(findMemberByName(members, "May"), undefined)
 })
 
 test("uses Unicode boundaries for blocked notification recipients", () => {
@@ -169,17 +184,21 @@ test("aborts a sync source read instead of accepting a partial Google response",
 test("quotes task ranges and skips visible non-task tabs", async () => {
   assert.equal(taskRange("Client's Plan", "A1:F1"), "'Client''s Plan'!A1:F1")
   assert.deepEqual(inspectTaskHeaders([" Done ", "Topic", "Responsibility", "Due Date", "Actual Submit", "Task ID"]), { valid: true, taskIdReady: true, taskIdAvailable: true })
+  assert.equal(findTaskHeaderRow([["Title"], ["", "Description", "Responsibility", "Due Date"]]), 1)
+  assert.equal(columnName(27), "AA")
   const originalFetch = globalThis.fetch
   let request = 0
   globalThis.fetch = async () => {
     request += 1
     if (request === 1) return { ok: true, json: async () => ({ properties: { title: "Timeline Aug 26" }, sheets: [
-      { properties: { title: "Client's Plan", sheetId: 11, hidden: false } },
-      { properties: { title: "Summary", sheetId: 12, hidden: false } },
+      { properties: { title: "Client's Plan", sheetId: 11, hidden: false, gridProperties: { columnCount: 26 } } },
+      { properties: { title: "Summary", sheetId: 12, hidden: false, gridProperties: { columnCount: 26 } } },
     ] }) }
     return { ok: true, json: async () => ({ valueRanges: [
-      { range: "'Client''s Plan'!A1:F2", values: [["Done", "Topic", "Responsibility", "Due Date", "Actual Submit", "Task ID"], [false, "Launch", "May", "10/08/2026", "", "task_1"]] },
+      { range: "'Client''s Plan'!A1:F3", values: [["Title"], ["", "Description", "Responsibility", "Due Date"], [false, "Launch", "May", "10/08/2026", ""]] },
       { range: "Summary!A1:F2", values: [["Metric", "Value"], ["Open", 1]] },
+      { range: "'Client''s Plan'!Z1:Z3", values: [[""], ["Task ID"], ["task_1"]] },
+      { range: "Summary!Z1:Z2", values: [] },
     ] }) }
   }
   try {
@@ -202,6 +221,7 @@ test("groups automatic Task ID repairs by sheet and tab", () => {
     { type: "missing_task_id", spreadsheetId: "a", sheetGid: 1 },
     { type: "duplicate_task_id", spreadsheetId: "a", sheetGid: 1 },
     { type: "invalid_task_id", spreadsheetId: "a", sheetGid: 2 },
+    { type: "invalid_task_id_header", spreadsheetId: "a", sheetGid: 2 },
     { type: "skipped_tab", spreadsheetId: "a", sheetGid: 3 },
   ]), [{ spreadsheetId: "a", sheetGids: [1, 2] }])
 })
@@ -294,10 +314,16 @@ test("filters My Work text, month, workflow and sorts completed newest first", (
 test("parses Bangkok and DD/MM/YYYY dates without ambiguous fallback", () => {
   assert.equal(bangkokDate(new Date("2026-07-28T17:30:00Z")), "2026-07-29")
   assert.equal(parseSheetDate("29/07/2026"), "2026-07-29")
+  assert.equal(parseSheetDate("20/6/26"), "2026-06-20")
   assert.equal(parseSheetDate("31/02/2026"), "")
   assert.equal(parseSheetDate("07/29/2026"), "")
   assert.equal(validIsoDate("2026-02-29"), false)
   assert.equal(daysFrom("2026-07-31", "2026-07-29"), 2)
+})
+
+test("recognizes a secondary Post Date schedule boundary", () => {
+  assert.equal(isSecondaryScheduleHeader(["No.", "Content", "Responsibility", "Post Date", "Status"]), true)
+  assert.equal(isSecondaryScheduleHeader(["", "Description", "Responsibility", "Due Date", "Actual Submit"]), false)
 })
 
 test("paginates Supabase queries beyond the 1,000-row default", async () => {
@@ -371,7 +397,7 @@ test("RLS migration grants task edits to active users and settings only to admin
   assert.match(launchSql, /revoke execute on function private\.audit_shared_change\(\) from public, anon, authenticated/)
   assert.match(launchSql, /notifications_update[\s\S]*private\.is_active_user\(\)/)
   const cronSql = await readFile(new URL("../supabase/cron.sql", import.meta.url), "utf8")
-  assert.match(cronSql, /'\*\/30 \* \* \* \*'/)
+  assert.match(cronSql, /'0 \*\/3 \* \* \*'/)
   assert.match(cronSql, /vault\.decrypted_secrets/)
   assert.doesNotMatch(cronSql, /X-Cron-Secret',\s*'[^']{32}/)
   const prioritySql = await readFile(new URL("../supabase/migrations/20260810090000_business_priorities.sql", import.meta.url), "utf8")
@@ -388,6 +414,9 @@ test("central state migration makes team changes atomic and realtime", async () 
   assert.match(sql, /if not private\.is_admin\(\)/)
   assert.match(sql, /on conflict \(name\) do update/)
   assert.match(sql, /revoke insert, update, delete on table public\.team_members from authenticated/)
+  assert.match(sql, /if TG_TABLE_NAME = 'task_workflow' then/)
+  assert.match(sql, /if TG_TABLE_NAME <> 'sheets' then/)
+  assert.doesNotMatch(sql, /record_key := case TG_TABLE_NAME/)
   assert.match(sql, /grant execute on function public\.replace_team_members\(jsonb\) to authenticated/)
   assert.match(sql, /function public\.patch_task_workflow\(/)
   assert.match(sql, /status = case when p_has_status/)
@@ -403,6 +432,50 @@ test("central state migration makes team changes atomic and realtime", async () 
   const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8")
   assert.match(app, /patchSystemState\(resource, key, mutation, options\)/)
   assert.match(app, /cachePendingWrites\(\[\.\.\.pendingWritesRef\.current\.values\(\)\]\)/)
+})
+
+test("access creation atomically links a unique timeline member", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/20260811122213_save_access_with_member.sql", import.meta.url), "utf8")
+  assert.match(sql, /function public\.save_access_with_member\(/)
+  assert.match(sql, /if not private\.is_admin\(\)/)
+  assert.match(sql, /insert into public\.team_members/)
+  assert.match(sql, /insert into public\.access_list/)
+  assert.match(sql, /access_list_active_member_name_unique/)
+  assert.match(sql, /lower\(trim\(member_name\)\)/)
+  assert.match(sql, /already linked to active email/)
+  assert.match(sql, /revoke execute on function public\.save_access_with_member[\s\S]*from public, anon/)
+  const client = await readFile(new URL("../src/lib/fullSystem.js", import.meta.url), "utf8")
+  assert.match(client, /rpc\("save_access_with_member"/)
+  const admin = await readFile(new URL("../src/components/AdminSettings.jsx", import.meta.url), "utf8")
+  assert.match(admin, /ชื่อที่แสดงใน Timeline/)
+  assert.match(admin, /team-member-names/)
+  assert.match(admin, /ยังไม่ผูกชื่อพนักงาน/)
+})
+
+test("assignment migration stores multiple members per role", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/20260811123658_multi_member_assignments.sql", import.meta.url), "utf8")
+  assert.match(sql, /jsonb_build_array\(entry\.value\)/)
+  assert.match(sql, /p_members jsonb/)
+  assert.match(sql, /jsonb_array_elements_text\(clean_members\)/)
+  assert.match(sql, /jsonb_set\(assignments\.value, array\[p_role\], clean_members/)
+  assert.match(sql, /jsonb_array_elements_text[\s\S]*assigned_member/)
+  const assignment = await readFile(new URL("../api/assignment.js", import.meta.url), "utf8")
+  assert.match(assignment, /p_members:/)
+  assert.match(assignment, /newlyAssigned/)
+})
+
+test("active users can add sheets while admin keeps update control", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/20260811124050_active_users_add_sheets.sql", import.meta.url), "utf8")
+  assert.match(sql, /create policy sheets_active_insert/)
+  assert.match(sql, /for insert to authenticated/)
+  assert.match(sql, /private\.is_active_user\(\)/)
+  const base = await readFile(new URL("../supabase/migrations/20260729000000_full_system.sql", import.meta.url), "utf8")
+  assert.match(base, /sheets_admin_update[\s\S]*private\.is_admin\(\)/)
+  const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8")
+  assert.match(app, /isAdmin \? "Admin" : "Add Sheet"/)
+  const settings = await readFile(new URL("../src/components/AdminSettings.jsx", import.meta.url), "utf8")
+  assert.match(settings, /isAdmin && <button[^>]*[\s\S]*Task tabs/)
+  assert.match(settings, /isAdmin && <button[^>]*[\s\S]*Remove/)
 })
 
 test("ready migration applies snapshots and completion atomically", async () => {

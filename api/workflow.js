@@ -1,5 +1,5 @@
 import { normalizeBrandKey } from "../src/lib/sharedState.js"
-import { responsibilityMentions } from "../src/lib/teamConfig.js"
+import { assignmentMemberNames, responsibilityMentions } from "../src/lib/teamConfig.js"
 import { userContext, sameOrigin, send } from "./_supabase.js"
 
 const STATUSES = new Set(["not_started", "in_progress", "waiting_client", "blocked"])
@@ -43,7 +43,7 @@ async function notifyBlocked(admin, task, actorEmail) {
   const brandName = brand?.brand_name || task.client_name
   const { data: assignment, error: assignmentError } = await admin.from("assignments").select("value").eq("brand_key", normalizeBrandKey(brandName)).maybeSingle()
   if (assignmentError) throw assignmentError
-  const assignedNames = new Set(Object.values(assignment?.value || {}))
+  const assignedNames = new Set(assignmentMemberNames(assignment?.value))
   const { data: access, error: accessError } = await admin.from("access_list").select("email,role,member_name").eq("active", true)
   if (accessError) throw accessError
   let recipients = blockedRecipients(access, assignedNames, task.responsibility, actorEmail)

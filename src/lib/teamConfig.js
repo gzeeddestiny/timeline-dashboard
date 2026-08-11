@@ -72,6 +72,11 @@ export const ROLE_CONFIG = {
   },
 }
 
+export function findMemberByName(members = [], name = "") {
+  const normalized = String(name).trim().toLocaleLowerCase()
+  return normalized ? members.find((member) => member.name.trim().toLocaleLowerCase() === normalized) : undefined
+}
+
 export function responsibilityMentions(responsibility, name) {
   const escaped = String(name || "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   if (!responsibility || !escaped) return false
@@ -86,9 +91,18 @@ export function matchMembersFromList(str, members = []) {
     .sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9))
 }
 
+export function assignmentRoleMembers(assignment = {}, role) {
+  const value = assignment?.[role]
+  return (Array.isArray(value) ? value : value ? [value] : []).filter((name) => typeof name === "string" && name)
+}
+
+export function assignmentMemberNames(assignment = {}) {
+  return [...new Set(Object.values(assignment || {}).flatMap((value) => Array.isArray(value) ? value : value ? [value] : []).filter((name) => typeof name === "string" && name))]
+}
+
 // Responsibility is the explicit owner. Brand assignment is only a fallback
 // for tasks whose Responsibility does not name a known team member.
 export function taskOwnerNames(task, members = [], assignment = {}) {
   const explicit = matchMembersFromList(task?.responsibility, members).map((member) => member.name)
-  return explicit.length ? explicit : [...new Set(Object.values(assignment).filter(Boolean))]
+  return explicit.length ? explicit : assignmentMemberNames(assignment)
 }

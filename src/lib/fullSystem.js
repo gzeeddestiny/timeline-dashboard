@@ -207,9 +207,15 @@ export async function listAccess() {
 }
 
 export async function saveAccess(entry) {
-  const row = { ...entry, email: entry.email.trim().toLowerCase() }
-  const { error } = await supabase.from("access_list").upsert(row, { onConflict: "email" })
+  const { data, error } = await supabase.rpc("save_access_with_member", {
+    p_email: entry.email,
+    p_access_role: entry.role,
+    p_member_name: entry.member_name || null,
+    p_team_role: entry.team_role || null,
+    p_active: entry.active !== false,
+  })
   throwIf(error)
+  return data
 }
 
 export async function deleteAccess(email) {
