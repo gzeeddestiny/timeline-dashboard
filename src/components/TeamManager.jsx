@@ -1,4 +1,4 @@
-import { useState, useRef } from "react"
+import { useEffect, useState, useRef } from "react"
 import { ROLE_CONFIG, ROLES } from "../lib/teamConfig"
 import ImageCropper from "./ImageCropper"
 
@@ -10,11 +10,25 @@ import ImageCropper from "./ImageCropper"
  * @param {boolean} open — show/hide panel
  * @param {function} onClose — close panel
  */
-export default function TeamManager({ members, onUpdate, open, onClose }) {
+export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemoveAvatar, open, onClose }) {
   const [newName, setNewName] = useState("")
   const [newRole, setNewRole] = useState("creative")
   const [cropData, setCropData] = useState(null) // { idx, src }
+  const [error, setError] = useState("")
+  const [savingAvatar, setSavingAvatar] = useState(false)
   const fileInputRefs = useRef({})
+  const closeRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return undefined
+    const previousFocus = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    closeRef.current?.focus()
+    const keydown = (event) => { if (event.key === "Escape") onClose() }
+    document.addEventListener("keydown", keydown)
+    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", keydown); previousFocus?.focus?.() }
+  }, [onClose, open])
 
   if (!open) return null
 
@@ -43,6 +57,11 @@ export default function TeamManager({ members, onUpdate, open, onClose }) {
   const handleAvatarUpload = (idx, e) => {
     const file = e.target.files?.[0]
     if (!file) return
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 10_000_000) {
+      setError("เลือกรูป JPEG, PNG หรือ WebP ขนาดไม่เกิน 10 MB")
+      e.target.value = ""
+      return
+    }
 
     const reader = new FileReader()
     reader.onload = (ev) => {
@@ -54,19 +73,19 @@ export default function TeamManager({ members, onUpdate, open, onClose }) {
     e.target.value = ""
   }
 
-  const handleCropDone = (croppedBase64) => {
-    if (cropData) {
-      const updated = [...members]
-      updated[cropData.idx] = { ...updated[cropData.idx], avatar: croppedBase64 }
-      onUpdate(updated)
-    }
-    setCropData(null)
+  const handleCropDone = async (croppedBase64) => {
+    if (!cropData) return
+    setSavingAvatar(true)
+    setError("")
+    const saved = await onUploadAvatar(cropData.idx, croppedBase64)
+    setSavingAvatar(false)
+    if (saved) setCropData(null)
+    else setError("บันทึกรูปไม่สำเร็จ กรุณาลองใหม่")
   }
 
-  const removeAvatar = (idx) => {
-    const updated = [...members]
-    updated[idx] = { ...updated[idx], avatar: "" }
-    onUpdate(updated)
+  const removeAvatar = async (idx) => {
+    setError("")
+    if (!await onRemoveAvatar(idx)) setError("ลบรูปไม่สำเร็จ กรุณาลองใหม่")
   }
 
   // Group by role
@@ -78,18 +97,21 @@ export default function TeamManager({ members, onUpdate, open, onClose }) {
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
+    <div className="ui-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/35" onClick={onClose}>
       <div
-        className="relative w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl border border-purple-200 bg-white shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="team-manager-title"
+        className="ui-popover ui-modal-enter relative w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-purple-100 bg-white px-6 py-4 rounded-t-2xl">
           <div>
-            <h2 className="text-base font-bold text-purple-900">Team Members</h2>
+            <h2 id="team-manager-title" className="text-base font-bold text-purple-900">Team Members</h2>
             <p className="text-[11px] text-purple-300">จัดการสมาชิก เปลี่ยนรูป เพิ่มคน</p>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-purple-300 transition hover:bg-purple-50 hover:text-purple-600">
+          <button ref={closeRef} type="button" onClick={onClose} aria-label="ปิดหน้าจัดการทีม" className="ui-button ui-button-secondary min-h-0 p-1.5 text-purple-400">
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -97,6 +119,7 @@ export default function TeamManager({ members, onUpdate, open, onClose }) {
         </div>
 
         <div className="p-6 space-y-5">
+          {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-600">{error}</div>}
           {/* Members by role */}
           {ROLES.map((role) => {
             const rc = ROLE_CONFIG[role]
@@ -115,38 +138,35 @@ export default function TeamManager({ members, onUpdate, open, onClose }) {
                 ) : (
                   <div className="space-y-2">
                     {group.map((m) => (
-                      <div key={m._idx} className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-2">
+                      <div key={m._idx} className="ui-task-row flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-2">
                         {/* Avatar */}
-                        <div className="relative group">
+                        <div className="relative">
+                          <button type="button" onClick={() => fileInputRefs.current[m._idx]?.click()} aria-label={`เปลี่ยนรูป ${m.name}`} className="group relative block rounded-full">
                           {m.avatar ? (
                             <img
                               src={m.avatar}
                               alt={m.name}
-                              className={`${rc.sizeClass} rounded-full object-cover ring-2 ${rc.ring} ring-offset-1 cursor-pointer`}
-                              onClick={() => fileInputRefs.current[m._idx]?.click()}
+                              className={`${rc.sizeClass} rounded-full object-cover ring-2 ${rc.ring} ring-offset-1`}
                             />
                           ) : (
                             <span
-                              className={`${rc.sizeClass} ${rc.bg} ${rc.textClass} rounded-full ring-2 ${rc.ring} ring-offset-1 flex items-center justify-center font-bold cursor-pointer`}
-                              onClick={() => fileInputRefs.current[m._idx]?.click()}
+                              className={`${rc.sizeClass} ${rc.bg} ${rc.textClass} rounded-full ring-2 ${rc.ring} ring-offset-1 flex items-center justify-center font-bold`}
                             >
                               {m.name[0]?.toUpperCase()}
                             </span>
                           )}
                           {/* Upload overlay */}
-                          <div
-                            className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                            onClick={() => fileInputRefs.current[m._idx]?.click()}
-                          >
+                          <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
                             <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                               <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                             </svg>
-                          </div>
+                          </span>
+                          </button>
                           <input
                             ref={(el) => { fileInputRefs.current[m._idx] = el }}
                             type="file"
-                            accept="image/*"
+                            accept="image/jpeg,image/png,image/webp"
                             className="hidden"
                             onChange={(e) => handleAvatarUpload(m._idx, e)}
                           />
@@ -159,7 +179,7 @@ export default function TeamManager({ members, onUpdate, open, onClose }) {
                         <select
                           value={m.role}
                           onChange={(e) => changeRole(m._idx, e.target.value)}
-                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium text-gray-600 outline-none focus:ring-1 focus:ring-purple-300"
+                          className="ui-field px-2 py-1 text-[11px] font-medium text-gray-600"
                         >
                           {ROLES.map((r) => (
                             <option key={r} value={r}>{ROLE_CONFIG[r].label}</option>
@@ -206,12 +226,12 @@ export default function TeamManager({ members, onUpdate, open, onClose }) {
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && addMember()}
                 placeholder="ชื่อ..."
-                className="flex-1 rounded-lg border border-purple-100 px-3 py-2 text-sm text-gray-700 placeholder-purple-200 outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-200"
+                className="ui-field flex-1 text-sm text-gray-700"
               />
               <select
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value)}
-                className="rounded-lg border border-purple-100 bg-white px-2 py-2 text-xs font-medium text-gray-600 outline-none focus:ring-1 focus:ring-purple-300"
+                className="ui-field px-2 text-xs font-medium text-gray-600"
               >
                 {ROLES.map((r) => (
                   <option key={r} value={r}>{ROLE_CONFIG[r].label}</option>
@@ -234,6 +254,7 @@ export default function TeamManager({ members, onUpdate, open, onClose }) {
           imageSrc={cropData.src}
           onCrop={handleCropDone}
           onCancel={() => setCropData(null)}
+          saving={savingAvatar}
         />
       )}
     </div>

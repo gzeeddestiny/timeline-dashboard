@@ -1,0 +1,37 @@
+export const UI_EMOJI = Object.freeze({
+  notStarted: "🆕",
+  inProgress: "🚧",
+  waitingClient: "⏳",
+  blocked: "🚫",
+  done: "✅",
+  overdue: "⚠️",
+  dueToday: "📌",
+  next7: "📅",
+  later: "🗓️",
+  unscheduled: "🗂️",
+  urgent: "🔥",
+  high: "⚡",
+  dataHealth: "🩺",
+  aging: "⏱️",
+  trend: "📈",
+  activity: "🕘",
+  roadmap: "🗓️",
+  clientHealth: "💼",
+  team: "👥",
+  upcoming: "📅",
+  sync: "🔄",
+  save: "💾",
+  retry: "🔁",
+  add: "➕",
+  assign: "👥",
+  remark: "📝",
+  admin: "⚙️",
+  celebration: "🎉",
+  inbox: "📭",
+  search: "🔍",
+  warning: "⚠️",
+})
+
+export function emojiText(name, label) {
+  return `${UI_EMOJI[name]} ${label}`
+}

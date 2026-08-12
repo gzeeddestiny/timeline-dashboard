@@ -1,44 +1,26 @@
 // ─── Team Member Configuration ────────────────────────────────────────────────
 //
-// ข้อมูลสมาชิกเก็บใน localStorage (แก้ไขจากหน้าเว็บได้)
+// ข้อมูลสมาชิก cache ต่อ browser session; Supabase เป็น source of truth
 // ROLE_CONFIG เป็น static — แก้ที่นี่ถ้าต้องการเพิ่ม role ใหม่
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEFAULT_MEMBERS = [
-  { name: "Tony",  role: "creative", avatar: "" },
-  { name: "RK",    role: "creative", avatar: "" },
-  { name: "Pleng", role: "ae",       avatar: "" },
-  { name: "Aom",   role: "ae",       avatar: "" },
-  { name: "Boom",  role: "pm",       avatar: "" },
-  { name: "Point", role: "pm",       avatar: "" },
-]
+const DEFAULT_MEMBERS = []
 
 const STORAGE_KEY = "magic-team-members"
 
-/** Load team members from localStorage (or defaults) */
+/** Load team members from sessionStorage (or defaults) */
 export function loadTeamMembers() {
+  if (typeof window === "undefined") return DEFAULT_MEMBERS
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
+    const stored = sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY)
+    if (stored && !sessionStorage.getItem(STORAGE_KEY)) sessionStorage.setItem(STORAGE_KEY, stored)
+    localStorage.removeItem(STORAGE_KEY)
     if (stored) {
       const parsed = JSON.parse(stored)
       if (Array.isArray(parsed) && parsed.length > 0) return parsed
     }
   } catch { /* ignore */ }
   return DEFAULT_MEMBERS
-}
-
-/** Save team members to localStorage */
-export function saveTeamMembers(members) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(members))
-}
-
-// For backward compat — modules that import TEAM_MEMBERS get the live version
-export let TEAM_MEMBERS = loadTeamMembers()
-
-/** Refresh the in-memory TEAM_MEMBERS from localStorage */
-export function refreshTeamMembers() {
-  TEAM_MEMBERS = loadTeamMembers()
-  return TEAM_MEMBERS
 }
 
 export const ROLES = ["creative", "ae", "media", "pm"]
@@ -90,16 +72,37 @@ export const ROLE_CONFIG = {
   },
 }
 
-/**
- * Fuzzy match team members from a responsibility string.
- * Uses the live TEAM_MEMBERS (from localStorage).
- */
-export function matchMembers(str) {
+export function findMemberByName(members = [], name = "") {
+  const normalized = String(name).trim().toLocaleLowerCase()
+  return normalized ? members.find((member) => member.name.trim().toLocaleLowerCase() === normalized) : undefined
+}
+
+export function responsibilityMentions(responsibility, name) {
+  const escaped = String(name || "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  if (!responsibility || !escaped) return false
+  return new RegExp(`(^|[^\\p{L}\\p{N}\\p{M}])${escaped}($|[^\\p{L}\\p{N}\\p{M}])`, "iu").test(responsibility)
+}
+
+export function matchMembersFromList(str, members = []) {
   if (!str) return []
-  const lower = str.toLowerCase()
-  const members = loadTeamMembers()
   const order = { creative: 0, ae: 1, media: 2, pm: 3 }
   return members
-    .filter((m) => lower.includes(m.name.toLowerCase()))
+    .filter((member) => responsibilityMentions(str, member.name))
     .sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9))
+}
+
+export function assignmentRoleMembers(assignment = {}, role) {
+  const value = assignment?.[role]
+  return (Array.isArray(value) ? value : value ? [value] : []).filter((name) => typeof name === "string" && name)
+}
+
+export function assignmentMemberNames(assignment = {}) {
+  return [...new Set(Object.values(assignment || {}).flatMap((value) => Array.isArray(value) ? value : value ? [value] : []).filter((name) => typeof name === "string" && name))]
+}
+
+// Responsibility is the explicit owner. Brand assignment is only a fallback
+// for tasks whose Responsibility does not name a known team member.
+export function taskOwnerNames(task, members = [], assignment = {}) {
+  const explicit = matchMembersFromList(task?.responsibility, members).map((member) => member.name)
+  return explicit.length ? explicit : assignmentMemberNames(assignment)
 }
