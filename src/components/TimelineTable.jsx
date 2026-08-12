@@ -45,7 +45,7 @@ function SheetTabIcon() {
 function TaskDetailButton({ task, onOpen }) {
   if (!onOpen) return null
   return (
-    <button type="button" onClick={(event) => { event.stopPropagation(); onOpen(task) }} title="Open task details" className="ml-1.5 rounded-md border border-purple-100 bg-white/70 px-1.5 py-0.5 text-[9px] font-semibold text-purple-500 hover:bg-purple-100">
+    <button type="button" onClick={(event) => { event.stopPropagation(); onOpen(task) }} title="Open task details" className="ui-row-action ml-1.5 rounded-md border border-purple-100 bg-white/80 px-1.5 py-0.5 text-[9px] font-semibold text-purple-600 hover:bg-purple-100">
       Details
     </button>
   )
@@ -357,7 +357,7 @@ function MobileTaskCard({ task, brandName, onOpen, onToggle, workflow, prioritie
   const workflowValue = task.done ? "done" : workflow[key] || "not_started"
   const workflowEmoji = { done: "done", not_started: "notStarted", in_progress: "inProgress", waiting_client: "waitingClient", blocked: "blocked" }[workflowValue]
   return (
-    <article className={`ui-card rounded-2xl p-4 ${priority === "urgent" ? "priority-urgent border-red-200" : priority === "high" ? "priority-high border-amber-200" : ""}`}>
+    <article className={`ui-card ui-interactive rounded-2xl p-4 ${priority === "urgent" ? "priority-urgent border-red-200" : priority === "high" ? "priority-high border-amber-200" : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-purple-500">
@@ -449,9 +449,7 @@ export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, 
               // File-level background color + left stripe
               const fc = fileColorMap[first.spreadsheetId || first.month || "unknown"]
               const rowBg    = fc ? `${fc.bg} border-l-4 ${fc.stripe}` : (groupIdx % 2 === 0 ? "bg-white" : "bg-purple-50/40")
-              const rowHover = "ui-interactive"
               const subBg    = fc ? `${fc.sub} border-l-4 ${fc.stripe}` : (groupIdx % 2 === 0 ? "bg-purple-50/30" : "bg-purple-100/30")
-              const subHover = "ui-interactive"
               const firstPriorityKey = sharedTaskKey(first)
               const firstLegacyKey = `${rawClientName}::${first.topic}`
               const firstPriorityCls = getPriorityClass(firstPriorityKey, firstLegacyKey, priorities)
@@ -461,7 +459,7 @@ export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, 
                 <Fragment key={groupKey}>
                   {/* Group summary row */}
                   <tr
-                    className={`transition-colors duration-150 ${firstPriorityCls || rowBg} ${rowHover}`}
+                    className={`ui-task-row ${firstPriorityCls || rowBg}`}
                   >
                     <StatusToggleCell task={first} onToggle={onToggle} editable={firstEditable} />
                     <WorkflowCell task={first} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${firstPriorityKey}`]} editable={firstEditable} />
@@ -537,7 +535,7 @@ export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, 
                     const subPriorityCls = getPriorityClass(subPriorityKey, subLegacyKey, priorities)
                     const subEditable = canEditTask(task)
                     return (
-                    <tr key={subPriorityKey} className={`${subPriorityCls || subBg} transition-colors duration-150 ${subHover}`}>
+                    <tr key={subPriorityKey} className={`ui-task-row ${subPriorityCls || subBg}`}>
                       <StatusToggleCell task={task} onToggle={onToggle} compact editable={subEditable} />
                       <WorkflowCell task={task} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${subPriorityKey}`]} compact editable={subEditable} />
                       <MonthCell month={task.month} compact />

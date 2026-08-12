@@ -179,7 +179,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel, saving = fals
 
   return (
     <div className="ui-overlay-enter fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={saving ? undefined : onCancel}>
-      <div role="dialog" aria-modal="true" aria-labelledby="crop-photo-title" className="ui-popover ui-panel-enter rounded-2xl p-5 space-y-4 w-72" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="crop-photo-title" className="ui-popover ui-modal-enter rounded-2xl p-5 space-y-4 w-72" onClick={(e) => e.stopPropagation()}>
         <div id="crop-photo-title" className="text-sm font-bold text-purple-900 text-center">Crop Photo</div>
         {error && <p className="text-center text-xs text-red-600">{error}</p>}
 

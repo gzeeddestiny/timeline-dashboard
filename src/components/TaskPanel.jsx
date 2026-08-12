@@ -136,14 +136,14 @@ export default function TaskPanel({
 
   return (
     <div className="ui-overlay-enter fixed inset-0 z-[11000] flex justify-end bg-black/35" onMouseDown={(event) => { if (event.target === event.currentTarget) requestClose() }}>
-      <section ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="task-panel-title" className="ui-panel-enter h-full w-full max-w-xl overflow-y-auto border-l border-[var(--ui-border)] bg-white p-5 shadow-[var(--ui-shadow-floating)] sm:p-7">
+      <section ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="task-panel-title" className="ui-panel-enter h-full w-full max-w-xl overflow-y-auto border-l border-[var(--ui-brand-border)] bg-white p-5 shadow-[var(--ui-shadow-floating)] sm:p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-brand)]">Task details</p>
             <h2 id="task-panel-title" className="mt-1 text-xl font-black text-purple-900">{task?.topic || "Task unavailable"}</h2>
             {task && <p className="mt-1 text-sm text-gray-500">{brandName} · {task.month || "No month"}</p>}
           </div>
-          <button ref={closeRef} type="button" onClick={requestClose} aria-label="Close task panel" className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">✕</button>
+          <button ref={closeRef} type="button" onClick={requestClose} aria-label="Close task panel" className="ui-button ui-button-secondary min-h-0 p-2">✕</button>
         </div>
 
         {!task ? (
@@ -156,7 +156,7 @@ export default function TaskPanel({
           </div>
         ) : (
           <>
-            <div className="mt-6 grid grid-cols-2 gap-3 rounded-xl border border-gray-100 bg-gray-50 p-4 text-xs">
+            <div className="mt-6 grid grid-cols-2 gap-3 rounded-xl border border-[var(--ui-brand-border)] bg-[var(--ui-brand-tint)] p-4 text-xs">
               <div><span className="text-gray-400">Responsibility</span><div className="mt-1 font-semibold text-gray-700">{task.responsibility || "—"}</div></div>
               <div><span className="text-gray-400">Due date</span><div className="mt-1 font-semibold text-gray-700">{task.dueDate || <><Emoji name="unscheduled" /> Unscheduled</>}</div></div>
               <div><span className="text-gray-400">Actual submit</span><div className="mt-1 font-semibold text-gray-700">{task.actualSubmit || "—"}</div></div>
@@ -192,7 +192,7 @@ export default function TaskPanel({
             </div>
 
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-5">
-              <button type="button" disabled={!editable || completion.saving} onClick={toggleDone} className={`rounded-lg px-4 py-2 text-xs font-bold text-white ${task.done ? "bg-gray-500" : "bg-green-600"} disabled:opacity-50`}>{completion.saving ? <><Emoji name="save" /> Saving…</> : task.done ? <><Emoji name="notStarted" /> Mark not done</> : <><Emoji name="done" /> Mark done</>}</button>
+              <button type="button" disabled={!editable || completion.saving} onClick={toggleDone} className={`ui-button rounded-lg px-4 py-2 text-xs font-bold text-white ${task.done ? "bg-gray-500" : "bg-green-600"} disabled:opacity-50`}>{completion.saving ? <><Emoji name="save" /> Saving…</> : task.done ? <><Emoji name="notStarted" /> Mark not done</> : <><Emoji name="done" /> Mark done</>}</button>
               {!editable && <span className="text-xs text-gray-400">ดูได้อย่างเดียว</span>}
               {completion.error && <><span className="text-xs text-red-500">{completion.error}</span><button type="button" onClick={toggleDone} className="text-xs font-semibold text-red-600"><Emoji name="retry" /> Retry</button></>}
               {sheetUrl && <a href={sheetUrl} target="_blank" rel="noreferrer" className="ml-auto rounded-lg border border-purple-200 px-4 py-2 text-xs font-semibold text-purple-600 hover:bg-purple-50">Open Google Sheet</a>}

@@ -12,7 +12,8 @@ export default function TeamFilterBar({ activeMember, onSelect, members = [] }) 
       {/* "All" chip */}
       <button
         onClick={() => onSelect(null)}
-        className={`rounded-full px-3 sm:px-2.5 py-1.5 sm:py-1 text-xs sm:text-[10px] font-bold transition-colors duration-150 shrink-0 ${
+        data-active={!activeMember}
+        className={`ui-chip rounded-full px-3 sm:px-2.5 py-1.5 sm:py-1 text-xs sm:text-[10px] font-bold shrink-0 ${
           !activeMember
             ? "bg-[var(--ui-brand)] text-white"
             : "bg-[var(--ui-surface-subtle)] text-[var(--ui-muted)] hover:bg-[var(--ui-brand-soft)] hover:text-[var(--ui-brand)]"
@@ -38,7 +39,8 @@ export default function TeamFilterBar({ activeMember, onSelect, members = [] }) 
                   key={m.name}
                   onClick={() => onSelect(isActive ? null : m.name)}
                   title={`${m.name} (${rc.label})`}
-                  className={`flex items-center gap-1 rounded-full p-0.5 transition-colors duration-150 shrink-0 ${
+                  data-active={isActive}
+                  className={`ui-chip flex items-center gap-1 rounded-full p-0.5 shrink-0 ${
                     isActive
                       ? `${rc.bg} ring-1 ${rc.ring} pr-2`
                       : "hover:bg-gray-50 active:bg-gray-100"

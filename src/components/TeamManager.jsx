@@ -102,7 +102,7 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
         role="dialog"
         aria-modal="true"
         aria-labelledby="team-manager-title"
-        className="ui-popover ui-panel-enter relative w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl"
+        className="ui-popover ui-modal-enter relative w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -111,7 +111,7 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
             <h2 id="team-manager-title" className="text-base font-bold text-purple-900">Team Members</h2>
             <p className="text-[11px] text-purple-300">จัดการสมาชิก เปลี่ยนรูป เพิ่มคน</p>
           </div>
-          <button ref={closeRef} type="button" onClick={onClose} aria-label="ปิดหน้าจัดการทีม" className="rounded-lg p-1.5 text-purple-300 transition hover:bg-purple-50 hover:text-purple-600">
+          <button ref={closeRef} type="button" onClick={onClose} aria-label="ปิดหน้าจัดการทีม" className="ui-button ui-button-secondary min-h-0 p-1.5 text-purple-400">
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -138,7 +138,7 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
                 ) : (
                   <div className="space-y-2">
                     {group.map((m) => (
-                      <div key={m._idx} className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-2">
+                      <div key={m._idx} className="ui-task-row flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-2">
                         {/* Avatar */}
                         <div className="relative">
                           <button type="button" onClick={() => fileInputRefs.current[m._idx]?.click()} aria-label={`เปลี่ยนรูป ${m.name}`} className="group relative block rounded-full">

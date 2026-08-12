@@ -60,14 +60,14 @@ function StatCard({ icon, label, value, sub, color, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`ui-card ui-interactive rounded-2xl text-left ${color.border} ${color.bg} p-5`}
+      className={`ui-card ui-interactive ui-drilldown rounded-2xl text-left ${color.border} ${color.bg} p-5`}
     >
       <div className="flex items-center gap-3">
-        <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${color.iconBg}`}>
+        <div className={`ui-icon-tile flex h-10 w-10 items-center justify-center rounded-xl ${color.iconBg}`}>
           {icon}
         </div>
         <div>
-          <div className={`text-2xl font-black tabular-nums ${color.text}`}>{value}</div>
+          <div key={value} className={`ui-data-change text-2xl font-black tabular-nums ${color.text}`}>{value}</div>
           <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">{label}</div>
         </div>
       </div>
@@ -85,7 +85,7 @@ function CompletionRing({ pct }) {
         background: `conic-gradient(${progressColor(roundedPct)} ${roundedPct * 3.6}deg, #f3e8ff ${roundedPct * 3.6}deg)`,
       }}
     >
-      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[11px] font-black text-purple-700">
+      <div key={roundedPct} className="ui-data-change flex h-8 w-8 items-center justify-center rounded-full bg-white text-[11px] font-black text-purple-700">
         {roundedPct}%
       </div>
     </div>
@@ -175,7 +175,7 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
 
   return (
     <div className="ui-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/35" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="brand-manager-title" className="ui-popover ui-panel-enter relative w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="brand-manager-title" className="ui-popover ui-modal-enter relative w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-purple-100 bg-white px-5 py-4 rounded-t-2xl">
           <div>
@@ -397,7 +397,7 @@ function MemberCard({ member, stats, maxOverdue, onOpen }) {
   return (
     <button type="button"
       onClick={onOpen}
-      className={`ui-card ui-interactive rounded-2xl p-4 ${
+      className={`ui-card ui-interactive ui-drilldown rounded-2xl p-4 ${
         isHighOverdue ? "border-red-200" : "border-gray-100"
       } text-left`}
     >
@@ -834,7 +834,7 @@ function DeadlineRoadmap({ allTasks, brandNameForTask, assignedNames, onOpenTask
             {/* Task rows */}
             {clients.map((c) => {
               return (
-                <div key={c.name} className="relative border-b border-gray-50" style={{ height: ROW_HEIGHT }}>
+                <div key={c.name} className="ui-roadmap-row relative border-b border-gray-50" style={{ height: ROW_HEIGHT }}>
                   {/* Grid lines */}
                   {monthMarkers.map((m) => (
                     <div key={`gl-${m.date.getTime()}`} className="absolute top-0 h-full border-l border-gray-100/40" style={{ left: m.left }} />
@@ -852,7 +852,7 @@ function DeadlineRoadmap({ allTasks, brandNameForTask, assignedNames, onOpenTask
                         type="button"
                         key={taskKey(t) || ti}
                         onClick={(event) => { event.stopPropagation(); onOpenTask?.(t) }}
-                        className="absolute top-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1"
+                        className="ui-milestone absolute top-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1"
                         style={{
                           left: taskOffset - dotSize / 2,
                           width: dotSize, height: dotSize,
@@ -1152,10 +1152,10 @@ export default function DashboardView({
   return (
     <div className="space-y-6">
 
-      <div className="ui-card flex flex-wrap items-center gap-3 rounded-2xl p-4">
+      <div className="ui-card flex flex-wrap items-center gap-3 rounded-2xl border-[var(--ui-brand-border)] p-4">
         <div className="mr-1">
           <div className="text-[10px] font-bold uppercase tracking-widest text-purple-500">Dashboard Filters</div>
-          <div className="text-[10px] text-gray-400">{filteredTasks.length} of {allTasks.length} tasks</div>
+          <div key={`${filteredTasks.length}:${allTasks.length}`} className="ui-data-change text-[10px] text-gray-400">{filteredTasks.length} of {allTasks.length} tasks</div>
         </div>
         <label className="text-[10px] font-semibold text-gray-500">
           Status
@@ -1195,22 +1195,22 @@ export default function DashboardView({
         Data freshness: {lastSynced.toLocaleString("th-TH")}
       </div>}
 
-      <div className={`rounded-2xl border p-4 text-xs ${syncStatus?.status === "failed" ? "border-red-200 bg-red-50" : syncStatus?.status === "running" ? "border-amber-200 bg-amber-50" : "border-purple-100 bg-white"}`}>
+      <div className={`ui-card rounded-2xl p-4 text-xs ${syncStatus?.status === "failed" ? "border-red-200 bg-red-50" : syncStatus?.status === "running" ? "border-amber-200 bg-amber-50" : "border-[var(--ui-brand-border)] bg-white"}`}>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <strong className="uppercase tracking-wider text-purple-700"><Emoji name="dataHealth" /> Data Health</strong>
           <span>Status: <strong>{syncStatus?.status || "not synced"}</strong></span>
-          <span>Source tasks: <strong>{syncStatus?.task_count ?? allTasks.length}</strong></span>
-          <button type="button" onClick={() => openDrilldown("Unscheduled", unscheduled)} className="min-h-11 underline decoration-purple-200 underline-offset-2 sm:min-h-0"><Emoji name="unscheduled" /> Unscheduled: <strong>{unscheduled.length}</strong></button>
-          <span>Invalid rows: <strong>{syncStatus?.invalid_row_count || 0}</strong></span>
-          <span>Skipped tabs: <strong>{syncStatus?.issues?.filter((issue) => issue.type === "skipped_tab").length || 0}</strong></span>
+          <span>Source tasks: <strong key={syncStatus?.task_count ?? allTasks.length} className="ui-data-change">{syncStatus?.task_count ?? allTasks.length}</strong></span>
+          <button type="button" onClick={() => openDrilldown("Unscheduled", unscheduled)} className="min-h-11 underline decoration-purple-200 underline-offset-2 sm:min-h-0"><Emoji name="unscheduled" /> Unscheduled: <strong key={unscheduled.length} className="ui-data-change">{unscheduled.length}</strong></button>
+          <span>Invalid rows: <strong key={syncStatus?.invalid_row_count || 0} className="ui-data-change">{syncStatus?.invalid_row_count || 0}</strong></span>
+          <span>Skipped tabs: <strong key={syncStatus?.issues?.filter((issue) => issue.type === "skipped_tab").length || 0} className="ui-data-change">{syncStatus?.issues?.filter((issue) => issue.type === "skipped_tab").length || 0}</strong></span>
         </div>
         {syncStatus?.error && <p className="mt-2 text-red-600">{syncStatus.error}</p>}
         {syncStatus?.issues?.length > 0 && <div className="mt-2 max-h-24 overflow-y-auto text-[10px] text-amber-700">{syncStatus.issues.slice(0, 5).map((issue, index) => <div key={`${issue.spreadsheetId}:${issue.sheetGid}:${issue.rowIndex}:${index}`}>{issue.clientName} row {issue.rowIndex}: {issue.message}</div>)}</div>}
       </div>
 
-      {drilldown && <div className="ui-card rounded-2xl border-purple-200 p-5">
-        <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-purple-800">{drilldown.label} · {drilldown.tasks.length} tasks</h3><button onClick={() => setDrilldown(null)} className="text-xs text-gray-400">Close</button></div>
-        <div className="mt-3 max-h-64 divide-y divide-gray-50 overflow-y-auto">{drilldown.tasks.map((task) => <button type="button" onClick={() => onOpenTask?.(task)} key={taskKey(task)} className="flex w-full gap-3 py-2 text-left text-xs hover:bg-purple-50 focus:outline-none focus:ring-2 focus:ring-purple-300"><span className="w-28 truncate font-semibold text-purple-600">{brandNameForTask(task)}</span><span className="flex-1 text-gray-600">{task.topic}</span><span className="text-gray-400">{fmtDate(task.dueDate)}</span></button>)}</div>
+      {drilldown && <div className="ui-card ui-view-enter rounded-2xl border-purple-200 p-5">
+        <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-purple-800">{drilldown.label} · {drilldown.tasks.length} tasks</h3><button onClick={() => setDrilldown(null)} className="ui-button ui-button-secondary min-h-0 px-2 py-1 text-xs">Close</button></div>
+        <div className="mt-3 max-h-64 divide-y divide-gray-50 overflow-y-auto">{drilldown.tasks.map((task) => <button type="button" onClick={() => onOpenTask?.(task)} key={taskKey(task)} className="ui-task-row flex w-full gap-3 px-2 py-2 text-left text-xs focus:outline-none focus:ring-2 focus:ring-purple-300"><span className="w-28 truncate font-semibold text-purple-600">{brandNameForTask(task)}</span><span className="flex-1 text-gray-600">{task.topic}</span><span className="text-gray-400">{fmtDate(task.dueDate)}</span></button>)}</div>
       </div>}
 
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -1266,11 +1266,11 @@ export default function DashboardView({
           }
         />
 
-        <button type="button" onClick={() => openDrilldown("Completed", filteredTasks.filter((task) => task.done))} className="ui-card ui-interactive rounded-2xl border-green-200 bg-green-50 p-5 text-left">
+        <button type="button" onClick={() => openDrilldown("Completed", filteredTasks.filter((task) => task.done))} className="ui-card ui-interactive ui-drilldown rounded-2xl border-green-200 bg-green-50 p-5 text-left">
           <div className="flex items-center gap-3">
             <CompletionRing pct={metrics.completionPct} />
             <div>
-              <div className="text-2xl font-black tabular-nums text-purple-700">{Math.round(metrics.completionPct)}%</div>
+              <div key={Math.round(metrics.completionPct)} className="ui-data-change text-2xl font-black tabular-nums text-purple-700">{Math.round(metrics.completionPct)}%</div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Completion</div>
             </div>
           </div>
@@ -1279,13 +1279,13 @@ export default function DashboardView({
 
         <div className="ui-card rounded-2xl p-5">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100">
+            <div className="ui-icon-tile flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100">
               <svg className="h-5 w-5 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
               </svg>
             </div>
             <div>
-              <div className="text-2xl font-black tabular-nums text-purple-700">{metrics.activeClientNames.length}</div>
+              <div key={metrics.activeClientNames.length} className="ui-data-change text-2xl font-black tabular-nums text-purple-700">{metrics.activeClientNames.length}</div>
               <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Active Clients</div>
             </div>
           </div>
@@ -1331,7 +1331,7 @@ export default function DashboardView({
         <div className="ui-card rounded-2xl p-5">
           <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="aging" /> Overdue Aging</h3>
           <div className="mt-4 grid grid-cols-4 gap-2">
-            {Object.entries(aging).map(([label, count]) => <button key={label} onClick={() => openDrilldown(`Overdue ${label} days`, agingTasks(label))} className="rounded-xl bg-red-50 p-3 text-center transition hover:bg-red-100"><div className="text-xl font-black text-red-600">{count}</div><div className="text-[10px] text-red-400">{label} days</div></button>)}
+            {Object.entries(aging).map(([label, count]) => <button key={label} onClick={() => openDrilldown(`Overdue ${label} days`, agingTasks(label))} className="ui-interactive rounded-xl border border-transparent bg-red-50 p-3 text-center"><div key={count} className="ui-data-change text-xl font-black text-red-600">{count}</div><div className="text-[10px] text-red-400">{label} days</div></button>)}
           </div>
         </div>
         <div className="ui-card rounded-2xl p-5">

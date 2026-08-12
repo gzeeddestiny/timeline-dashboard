@@ -44,7 +44,7 @@ export default function MyWorkView({ tasks, memberName, workflow, tableProps, pr
   const isDefault = JSON.stringify(effectiveFilters) === JSON.stringify(DEFAULT_MY_WORK_FILTERS)
   return (
     <div>
-      <div className="ui-card mb-5 rounded-2xl p-5">
+      <div className="ui-card mb-5 rounded-2xl border-[var(--ui-brand-border)] p-5">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-brand)]">My Work</p>
@@ -68,18 +68,18 @@ export default function MyWorkView({ tasks, memberName, workflow, tableProps, pr
           <select value={filters.workflow} onChange={(event) => setFilters((current) => ({ ...current, workflow: event.target.value }))} className="ui-field text-sm text-gray-600">
             {WORKFLOWS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
-          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-purple-100 px-3 py-2 text-xs font-semibold text-purple-600">
+          <label data-active={filters.showCompleted} className="ui-chip flex cursor-pointer items-center gap-2 rounded-xl border border-purple-100 px-3 py-2 text-xs font-semibold text-purple-600">
             <input type="checkbox" checked={filters.showCompleted} onChange={(event) => setFilters((current) => ({ ...current, showCompleted: event.target.checked }))} />
             Completed ({filtered.completed.length})
           </label>
           <button type="button" disabled={isDefault} onClick={() => setFilters(DEFAULT_MY_WORK_FILTERS)} className="ui-button ui-button-secondary text-xs disabled:opacity-40">Reset</button>
         </div>
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
-          {sections.map(([label, emoji,, items]) => <span key={label} className="rounded-full bg-purple-50 px-3 py-1 text-purple-600"><Emoji name={emoji} /> {label}: <strong>{items.length}</strong></span>)}
+          {sections.map(([label, emoji,, items]) => <span key={label} className="ui-chip rounded-full bg-purple-50 px-3 py-1 text-purple-600"><Emoji name={emoji} /> {label}: <strong key={items.length} className="ui-data-change">{items.length}</strong></span>)}
         </div>
       </div>
       {nextAction && (
-        <button type="button" onClick={() => tableProps.onOpenTask?.(nextAction)} className="ui-button ui-button-primary mb-5 flex w-full items-center justify-between gap-4 rounded-2xl p-5 text-left">
+        <button type="button" onClick={() => tableProps.onOpenTask?.(nextAction)} className="ui-next-action mb-5 flex w-full items-center justify-between gap-4 rounded-2xl p-5 text-left text-white">
           <span className="min-w-0">
             <span className="text-[10px] font-bold uppercase tracking-widest text-purple-200">Next Action</span>
             <span className="mt-1 block truncate text-base font-bold">{tableProps.brandNameForTask(nextAction)} · {nextAction.topic}</span>

@@ -86,13 +86,13 @@ export default function AdminSettings({ open, onClose, members, currentEmail, co
 
   return (
     <div className="ui-overlay-enter fixed inset-0 z-[10000] flex items-center justify-center bg-black/35 p-4" onClick={onClose}>
-      <section role="dialog" aria-modal="true" aria-labelledby="admin-settings-title" className="ui-popover ui-panel-enter max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl p-6" onClick={(event) => event.stopPropagation()}>
+      <section role="dialog" aria-modal="true" aria-labelledby="admin-settings-title" className="ui-popover ui-modal-enter max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl p-6" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-center justify-between">
           <div>
             <h2 id="admin-settings-title" className="text-lg font-bold text-purple-900"><Emoji name={isAdmin ? "admin" : "add"} /> {isAdmin ? "Admin Settings" : "Add Google Sheet"}</h2>
             <p className="text-xs text-gray-400">{isAdmin ? "อนุมัติอีเมลและจัดการข้อมูลกลาง" : "เพิ่ม Sheet ใหม่ให้ทุกคนเห็นจาก URL หลักเดียวกัน"}</p>
           </div>
-          <button ref={closeRef} type="button" onClick={onClose} aria-label="ปิด Admin Settings" className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">✕</button>
+          <button ref={closeRef} type="button" onClick={onClose} aria-label="ปิด Admin Settings" className="ui-button ui-button-secondary min-h-0 p-2">✕</button>
         </div>
 
         {isAdmin && (!configured ? (
@@ -125,7 +125,7 @@ export default function AdminSettings({ open, onClose, members, currentEmail, co
                 <thead className="bg-gray-50 text-xs uppercase text-gray-400"><tr><th className="px-4 py-3">Email</th><th className="px-4 py-3">Role</th><th className="px-4 py-3">Member</th><th className="px-4 py-3">Status</th><th /></tr></thead>
                 <tbody className="divide-y divide-gray-100">
                   {entries.map((entry) => (
-                    <tr key={entry.email}>
+                    <tr key={entry.email} className="ui-task-row">
                       <td className="px-4 py-3 font-medium text-gray-700">{entry.email}</td>
                       <td className="px-4 py-3"><select disabled={saving || entry.email === currentEmail} value={entry.role} onChange={(event) => updateEntry(entry, { role: event.target.value })} className="rounded border border-gray-100 bg-white px-2 py-1 text-xs">{ACCESS_ROLES.map((role) => <option key={role}>{role}</option>)}</select></td>
                       <td className="px-4 py-3"><select disabled={saving} value={entry.member_name || ""} onChange={(event) => updateEntry(entry, { member_name: event.target.value || null })} className="rounded border border-gray-100 bg-white px-2 py-1 text-xs">{!entry.member_name && <option value="">—</option>}{members.map((member) => <option key={member.name}>{member.name}</option>)}</select>{!entry.member_name && <p className="mt-1 text-[10px] font-semibold text-amber-600">⚠️ ยังไม่ผูกชื่อพนักงาน</p>}</td>
@@ -154,7 +154,7 @@ export default function AdminSettings({ open, onClose, members, currentEmail, co
                 <button type="button" onClick={dataSources.addSheet} className="ui-button ui-button-primary text-xs"><Emoji name="add" /> Add Sheet</button>
               </div>
               <div className="mt-3 space-y-2">
-                {dataSources.sheets.map((sheet) => <div key={sheet.spreadsheetId} className="rounded-xl border border-gray-100 p-3">
+                {dataSources.sheets.map((sheet) => <div key={sheet.spreadsheetId} className="ui-card ui-task-row rounded-xl p-3">
                   <div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs text-gray-600">{sheet.url}</span>{isAdmin && <button type="button" disabled={!configured} onClick={() => inspectTabs(sheet.spreadsheetId)} className="text-xs font-semibold text-purple-600 disabled:text-gray-300">Task tabs</button>}{isAdmin && <button type="button" onClick={() => dataSources.removeSheet(sheet.spreadsheetId)} className="text-xs font-semibold text-red-500">Remove</button>}</div>
                   {taskTabs.spreadsheetId === sheet.spreadsheetId && <div className="mt-3 rounded-lg bg-gray-50 p-3">
                     {taskTabs.loading ? <p className="text-xs text-gray-400">Checking tabs…</p> : taskTabs.error ? <p className="text-xs text-red-500">{taskTabs.error}</p> : <>

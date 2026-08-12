@@ -9,7 +9,8 @@ function MemberOption({ member, isSelected, onToggle }) {
   return (
     <button
       onClick={(e) => { e.stopPropagation(); onToggle(member.name) }}
-      className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors duration-150 w-full text-left ${
+      data-active={isSelected}
+      className={`ui-chip flex items-center gap-2 rounded-lg px-2.5 py-1.5 w-full text-left ${
         isSelected
           ? `${rc.bg} ring-1 ${rc.ring}`
           : "hover:bg-gray-50 active:bg-gray-100"
@@ -197,7 +198,8 @@ export default function AssignTeam({ displayName, assignmentKey, legacyKey, assi
       <button
         ref={btnRef}
         onClick={(e) => { e.stopPropagation(); setShowPopup((open) => !open) }}
-        className={`flex items-center gap-1 rounded-lg transition-colors duration-150 ${
+        data-active={showPopup}
+        className={`ui-chip flex items-center gap-1 rounded-lg ${
           compact ? "px-1 py-0.5" : "px-1.5 py-1"
         } ${showPopup ? "bg-purple-100 ring-1 ring-purple-300" : "hover:bg-purple-50"}`}
         title="Assign team"
@@ -243,7 +245,7 @@ export default function AssignTeam({ displayName, assignmentKey, legacyKey, assi
             {/* Sheet */}
             <div
               ref={popupRef}
-              className="ui-popover ui-panel-enter relative rounded-t-2xl px-4 pb-6 pt-3 space-y-3 max-h-[75vh] overflow-y-auto"
+              className="ui-popover ui-sheet-enter relative rounded-t-2xl px-4 pb-6 pt-3 space-y-3 max-h-[75vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Drag handle */}
@@ -300,7 +302,7 @@ export default function AssignTeam({ displayName, assignmentKey, legacyKey, assi
           /* ── Desktop: positioned dropdown ── */
           <div
             ref={popupRef}
-            className="ui-popover ui-panel-enter fixed z-[9999] w-56 rounded-xl p-3 space-y-3 max-h-[70vh] overflow-y-auto"
+            className="ui-popover ui-popover-enter fixed z-[9999] w-56 rounded-xl p-3 space-y-3 max-h-[70vh] overflow-y-auto"
             style={{ top: popupPos.top, left: popupPos.left }}
             onClick={(e) => e.stopPropagation()}
           >

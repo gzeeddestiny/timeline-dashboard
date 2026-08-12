@@ -11,7 +11,11 @@
   --ui-muted: #6b7280;
   --ui-brand: #480174;
   --ui-brand-hover: #360158;
-  --ui-brand-soft: #f5eff8;
+  --ui-brand-strong: #2f014d;
+  --ui-brand-soft: #f6f0f9;
+  --ui-brand-tint: #fbf8fc;
+  --ui-brand-border: #e4d5eb;
+  --ui-brand-border-strong: #cbaed8;
   --ui-danger: #b42318;
   --ui-danger-soft: #fef3f2;
   --ui-blocked: #9f1239;
@@ -25,6 +29,8 @@
   --ui-slate: #475569;
   --ui-slate-soft: #f1f5f9;
   --ui-shadow-floating: 0 16px 40px rgb(23 21 28 / 14%);
+  --ui-shadow-raised: 0 10px 24px rgb(72 1 116 / 9%);
+  --ui-shadow-card: 0 1px 2px rgb(23 21 28 / 4%);
   --ui-ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -52,6 +58,8 @@ button, input, select, textarea { font: inherit; }
   border: 1px solid var(--ui-border);
   border-radius: 1rem;
   background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-card);
+  transition: border-color 150ms var(--ui-ease), background-color 150ms var(--ui-ease), transform 150ms var(--ui-ease);
 }
 
 .ui-popover {
@@ -70,6 +78,11 @@ button, input, select, textarea { font: inherit; }
   transition: border-color 150ms var(--ui-ease), background-color 150ms var(--ui-ease);
 }
 
+.ui-field:focus {
+  border-color: var(--ui-brand-border-strong);
+  box-shadow: 0 0 0 3px rgb(72 1 116 / 8%);
+}
+
 .ui-field:disabled { background: var(--ui-surface-subtle); color: var(--ui-muted); }
 
 .ui-button {
@@ -83,11 +96,137 @@ button, input, select, textarea { font: inherit; }
 .ui-button-primary { background: var(--ui-brand); color: white; }
 .ui-button-secondary { border: 1px solid var(--ui-border); background: white; color: var(--ui-muted); }
 
+.ui-header {
+  border-bottom-color: var(--ui-brand-border);
+  box-shadow: 0 1px 0 rgb(72 1 116 / 4%);
+}
+
+.ui-nav-tabs {
+  border: 1px solid var(--ui-brand-border);
+  background: var(--ui-brand-tint);
+}
+
+.ui-nav-tab {
+  position: relative;
+  isolation: isolate;
+  transition: color 150ms var(--ui-ease), background-color 150ms var(--ui-ease), transform 150ms var(--ui-ease);
+}
+
+.ui-nav-tab::after {
+  position: absolute;
+  right: .55rem;
+  bottom: -.3rem;
+  left: .55rem;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--ui-brand);
+  content: "";
+  opacity: 0;
+  transform: scaleX(.45);
+  transition: opacity 150ms var(--ui-ease), transform 150ms var(--ui-ease);
+}
+
+.ui-nav-tab[data-active="true"]::after { opacity: 1; transform: scaleX(1); }
+.ui-nav-tab svg { transition: transform 150ms var(--ui-ease), color 150ms var(--ui-ease); }
+
+.ui-chip {
+  border: 1px solid transparent;
+  transition: color 150ms var(--ui-ease), background-color 150ms var(--ui-ease), border-color 150ms var(--ui-ease), transform 120ms var(--ui-ease);
+}
+
+.ui-chip[data-active="true"] {
+  border-color: var(--ui-brand-border-strong);
+  background: var(--ui-brand-soft);
+  color: var(--ui-brand);
+}
+
+.ui-icon-tile {
+  transition: color 150ms var(--ui-ease), background-color 150ms var(--ui-ease), transform 150ms var(--ui-ease);
+}
+
+.ui-interactive { cursor: pointer; }
+.ui-interactive:active { transform: translateY(0) scale(.99); }
+
+.ui-drilldown { position: relative; padding-right: 2.25rem !important; }
+.ui-drilldown::after {
+  position: absolute;
+  top: .8rem;
+  right: .85rem;
+  width: .45rem;
+  height: .45rem;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  color: var(--ui-brand);
+  content: "";
+  opacity: .3;
+  transform: translate(-2px, 2px);
+  transition: opacity 140ms var(--ui-ease), transform 140ms var(--ui-ease);
+}
+
+.ui-task-row {
+  transition: background-color 150ms var(--ui-ease), border-color 150ms var(--ui-ease);
+}
+
+.ui-row-action {
+  opacity: 1;
+  transition: opacity 140ms var(--ui-ease), color 140ms var(--ui-ease), background-color 140ms var(--ui-ease), border-color 140ms var(--ui-ease), transform 140ms var(--ui-ease);
+}
+
+.ui-next-action {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #69258e;
+  background: var(--ui-brand);
+  box-shadow: 0 12px 28px rgb(72 1 116 / 16%);
+  transition: background-color 150ms var(--ui-ease), border-color 150ms var(--ui-ease), transform 150ms var(--ui-ease);
+}
+
+.ui-next-action::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: #c68be0;
+  content: "";
+}
+
+.ui-milestone {
+  transition: opacity 140ms var(--ui-ease), transform 140ms var(--ui-ease), border-color 140ms var(--ui-ease);
+}
+
+.ui-roadmap-row:focus-within .ui-milestone:not(:focus) { opacity: .42; }
+
+@keyframes ui-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ui-panel-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes ui-modal-in { from { opacity: 0; transform: translateY(4px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes ui-sheet-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ui-popover-in { from { opacity: 0; transform: translateY(-4px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes ui-view-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ui-data-change { 0% { background-color: #eadcf0; } 100% { background-color: transparent; } }
+
+.ui-overlay-enter { animation: ui-overlay-in 140ms var(--ui-ease) both; }
+.ui-panel-enter { animation: ui-panel-in 160ms var(--ui-ease) both; }
+.ui-modal-enter { animation: ui-modal-in 160ms var(--ui-ease) both; }
+.ui-sheet-enter { animation: ui-sheet-in 170ms var(--ui-ease) both; }
+.ui-popover-enter { transform-origin: top right; animation: ui-popover-in 140ms var(--ui-ease) both; }
+.ui-view-enter { animation: ui-view-in 160ms var(--ui-ease) both; }
+.ui-data-change { border-radius: .25rem; animation: ui-data-change 400ms var(--ui-ease) both; }
+
 @media (hover: hover) and (pointer: fine) {
   .ui-field:hover { border-color: #cbd5e1; }
-  .ui-button-primary:hover { background: var(--ui-brand-hover); }
+  .ui-button-primary:hover { background: var(--ui-brand-hover); transform: translateY(-1px); }
   .ui-button-secondary:hover { border-color: #c4b5cc; background: var(--ui-brand-soft); color: var(--ui-brand); }
-  .ui-interactive:hover { border-color: #d8c8df; background-color: #fbf9fc; }
+  .ui-interactive:hover { border-color: var(--ui-brand-border-strong); box-shadow: var(--ui-shadow-raised); transform: translateY(-2px); }
+  .ui-interactive:hover .ui-icon-tile { background-color: #eadcf0; transform: scale(1.04); }
+  .ui-drilldown:hover::after { opacity: 1; transform: translate(0, 0); }
+  .ui-nav-tab:hover { background: white; color: var(--ui-brand); }
+  .ui-nav-tab:hover svg { transform: translateY(-1px); }
+  .ui-chip:hover { border-color: var(--ui-brand-border); background: var(--ui-brand-soft); color: var(--ui-brand); }
+  .ui-next-action:hover { border-color: #8f4bad; background: var(--ui-brand-hover); transform: translateY(-2px); }
+  .ui-task-row:hover, .ui-task-row:focus-within { background-color: var(--ui-brand-tint) !important; box-shadow: inset 4px 0 0 var(--ui-brand); }
+  .ui-row-action { opacity: 0; }
+  .ui-task-row:hover .ui-row-action, .ui-task-row:focus-within .ui-row-action { opacity: 1; }
+  .ui-roadmap-row:hover .ui-milestone { opacity: .42; }
+  .ui-roadmap-row .ui-milestone:hover { z-index: 2; opacity: 1; transform: translateY(-50%) scale(1.4); border-color: #d7b5e5; box-shadow: 0 0 0 4px rgb(72 1 116 / 12%); }
 }
 
 .status-overdue, .priority-urgent { border-left: 3px solid var(--ui-danger) !important; background: var(--ui-danger-soft) !important; }
@@ -97,12 +236,6 @@ button, input, select, textarea { font: inherit; }
 .status-done { color: var(--ui-success); background: var(--ui-success-soft); }
 .status-unscheduled { color: var(--ui-slate); background: var(--ui-slate-soft); }
 .priority-high { border-left: 3px solid var(--ui-warning) !important; background: var(--ui-warning-soft) !important; }
-
-@keyframes ui-overlay-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes ui-panel-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
-
-.ui-overlay-enter { animation: ui-overlay-in 140ms var(--ui-ease) both; }
-.ui-panel-enter { animation: ui-panel-in 160ms var(--ui-ease) both; }
 
 @media (max-width: 639px) {
   .ui-button, .ui-field { min-height: 2.75rem; }

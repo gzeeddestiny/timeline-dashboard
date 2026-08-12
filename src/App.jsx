@@ -623,7 +623,7 @@ export default function App() {
     <div className="min-h-screen bg-[var(--ui-canvas)] text-[var(--ui-text)]">
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-10 border-b border-[var(--ui-border)] bg-white">
+      <header className="ui-header sticky top-0 z-10 border-b bg-white">
         {/* Row 1: Logo + View tabs + actions */}
         <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2">
           {/* Left: Logo + Brand */}
@@ -638,7 +638,7 @@ export default function App() {
           <div className="h-6 w-px bg-[var(--ui-border)] shrink-0" />
 
           {/* Center: View tabs */}
-          <div className="flex items-center gap-0.5 rounded-lg bg-[var(--ui-surface-subtle)] p-0.5 shrink-0">
+          <div className="ui-nav-tabs flex items-center gap-0.5 rounded-lg p-0.5 shrink-0">
             {[
               { mode: "my", label: "My Work", icon: "M9 12l2 2 4-4M5 4h14v16H5z" },
               { mode: "table", label: "Explorer", icon: "M3 10h18M3 6h18M3 14h18M3 18h18" },
@@ -649,7 +649,8 @@ export default function App() {
                 onClick={() => setViewMode(mode)}
                 aria-label={label}
                 aria-current={viewMode === mode ? "page" : undefined}
-                className={`flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors duration-150 sm:min-h-0 sm:min-w-0 sm:px-2.5 ${
+                data-active={viewMode === mode}
+                className={`ui-nav-tab flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold sm:min-h-0 sm:min-w-0 sm:px-2.5 ${
                   viewMode === mode
                     ? "bg-[var(--ui-brand-soft)] text-[var(--ui-brand)]"
                     : "text-[var(--ui-muted)] hover:bg-white hover:text-[var(--ui-text)]"
@@ -693,7 +694,7 @@ export default function App() {
             </button>}
             <button onClick={() => setShowAdminSettings(true)} className="ui-button ui-button-secondary min-h-11 px-2 text-[10px] font-semibold sm:min-h-0"><Emoji name={isAdmin ? "admin" : "add"} /> {isAdmin ? "Admin" : "Add Sheet"}</button>
             <NotificationCenter configured={isSupabaseConfigured} email={user?.email} onOpenTask={openTask} />
-            {isSupabaseConfigured && <button onClick={signOut} className="rounded-lg px-2 py-1 text-[10px] text-gray-400 hover:bg-gray-50 hover:text-gray-600" title={user?.email}>Sign out</button>}
+            {isSupabaseConfigured && <button onClick={signOut} className="ui-button ui-button-secondary min-h-0 px-2 py-1 text-[10px]" title={user?.email}>Sign out</button>}
             <span className="rounded-md bg-purple-50 px-2 py-1 text-[10px] font-semibold text-purple-500 tabular-nums hidden md:block">
               {new Date().toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}
             </span>
@@ -743,7 +744,7 @@ export default function App() {
           </div>
         )}
 
-        <div key={viewMode}>
+        <div key={viewMode} className="ui-view-enter">
         {viewMode === "my" ? (
           <MyWorkView tasks={myTasks} memberName={myMemberName} workflow={workflow} preferenceOwner={user?.email || "local"} tableProps={{ ...tableProps, clientStats: displayClientStats }} />
         ) : viewMode === "table" ? (
