@@ -1,0 +1,21 @@
+{
+  "requests": 692,
+  "bytes": 28059,
+  "byPath": {
+    "/rest/v1/access_list": 120,
+    "/rest/v1/notifications": 40,
+    "/rest/v1/v2_mentions": 20,
+    "/rest/v1/sheets": 40,
+    "/rest/v1/team_members": 40,
+    "/rest/v1/brands": 40,
+    "/rest/v1/assignments": 40,
+    "/rest/v1/tasks_current": 40,
+    "/rest/v1/task_workflow": 39,
+    "/rest/v1/brand_catalog": 39,
+    "/rest/v1/brand_workstreams": 39,
+    "/rest/v1/brand_workstream_sources": 39,
+    "/rest/v1/contract_rounds": 39,
+    "/rest/v1/milestone_overrides": 39,
+    "/rest/v1/sync_runs": 78
+  }
+}

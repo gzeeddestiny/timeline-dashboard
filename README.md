@@ -17,14 +17,14 @@ Google OAuth redirect สำหรับ local ปกติคือ `http://127
 
 - Browser ใช้เฉพาะ `VITE_SUPABASE_URL` และ `VITE_SUPABASE_PUBLISHABLE_KEY`
 - Vercel Functions ใช้ `SUPABASE_URL` และ `SUPABASE_SECRET_KEY`; ห้ามขึ้นต้น secret ด้วย `VITE_`
-- เพิ่ม `sheets`, `team_members`, `task_workflow`, `assignments`, `brands`, `sync_runs` และ `notifications` เข้า Supabase Realtime publication เพื่อรับการเปลี่ยนแปลงทันที; polling 30 วินาทียังคงเป็น fallback
+- หน้าผู้ใช้ดึง snapshot ครั้งแรกตอนเปิดหน้า และดึงใหม่เมื่อกด Refresh เท่านั้น โดยไม่ polling, refresh ตอนกลับเข้าแท็บ หรือ subscribe Realtime สำหรับข้อมูลงาน; access และ notifications ยังตรวจแบบเบาแยกจากข้อมูลงาน
 - RLS บังคับ allowlist และ role ที่ database: active user อ่าน/แก้ workflow และ assignment ได้, เฉพาะ Admin แก้ access, Sheets, ทีม และ brand mapping
 - ชื่อ/role เก็บใน `team_members`; รูปโปรไฟล์เก็บใน public bucket `team-avatars` ขนาดไม่เกิน 2 MB และฐานข้อมูลเก็บเฉพาะ URL
-- เปิด Supabase Cron และ `pg_net`, สร้าง Vault secrets ชื่อ `timeline_dashboard_url` กับ `timeline_cron_secret` แล้วรัน `supabase/cron.sql`; ระบบจะ sync ทุก 30 นาที ไม่มี email queue ในรอบนี้
+- เปิด Supabase Cron และ `pg_net`, สร้าง Vault secrets ชื่อ `timeline_dashboard_url` กับ `timeline_cron_secret` แล้วรัน `supabase/cron.sql`; ระบบ sync นาที `:25/:55` และเรียก notification scheduler/queue worker ทุก 15 นาที
 
 ## Sync and freshness
 
-`POST /api/sync` ดึงเฉพาะ tab ที่ header A:E ตรง schema งาน เมื่อพบ Task ID ว่าง/ซ้ำ/ไม่ปลอดภัยจะให้ Apps Script ซ่อมแล้วอ่านซ้ำหนึ่งครั้ง ก่อน apply snapshot และ metrics ใน database transaction เดียว Summary/Report tab ถูกข้ามและแสดงใน Data Health ส่วน Manual Sync จำกัดอย่างน้อย 60 วินาที `POST /api/cron-sync` ใช้ `X-Cron-Secret` จาก Supabase Vault เพื่อ sync ทุก 30 นาที ทั้งสอง endpoint ใช้ lock และ sync core เดียวกัน ถ้าข้อมูลเกิน 24 ชั่วโมง UI จะแสดง stale warning
+`POST /api/sync` ดึงเฉพาะ tab ที่ header A:E ตรง schema งาน เมื่อพบ Task ID ว่าง/ซ้ำ/ไม่ปลอดภัยจะให้ Apps Script ซ่อมแล้วอ่านซ้ำหนึ่งครั้ง ก่อน apply snapshot และ metrics ใน database transaction เดียว Summary/Report tab ถูกข้ามและแสดงใน Data Health ส่วน Manual Sync จำกัดอย่างน้อย 60 วินาที `POST /api/cron-sync` ใช้ `X-Cron-Secret` จาก Supabase Vault เพื่อ sync นาที `:25/:55` ทั้งสอง endpoint ใช้ lock และ sync core เดียวกัน ถ้าข้อมูลเกิน 24 ชั่วโมง UI จะแสดง stale warning
 
 ตั้ง scheduled sync หลัง Production URL พร้อม:
 
@@ -34,6 +34,12 @@ select vault.create_secret('<same value as CRON_SYNC_SECRET>', 'timeline_cron_se
 ```
 
 จากนั้นรัน `supabase/cron.sql` และตรวจ `cron.job_run_details` คู่กับ `public.sync_runs` การ sync จริงต้องจบภายใน 45 วินาที; ถ้าเกินให้กลับ Maintenance และไม่เพิ่ม timeout เพื่อกลบปัญหา
+
+## Notifications
+
+ใช้ migration `20260830100000_notification_system.sql`, `APP_URL`, Apps Script deployment เดิม และ `CRON_SYNC_SECRET` เดียวกับ sync โดยไม่ต้องเพิ่มบริการภายนอก Scheduler เรียก `/api/cron-notifications` ทุก 15 นาที; Daily Digest ทำงานวันจันทร์–ศุกร์ตามเวลา Bangkok และ No Activity ทำงานทุกวัน ระบบ queue เรียง Manual > No Activity > Daily, retry known-unsent สูงสุด 3 ครั้ง และหยุดที่ `unknown` เมื่อไม่ทราบผลเพื่อกัน email ซ้ำ
+
+หลัง deploy `google-apps-script/Code.gs` version ใหม่ ให้ authorize MailApp แล้วไป Admin Settings > Notifications เพื่อตรวจ sender/quota, เลือก Owner recipients กับ Primary Owner, Preview และส่ง Test email ก่อนเปิด Auto Send หน้าเดียวกันมี preflight และประวัติ 90 วัน พนักงาน Snooze งานของตนจาก My Work > No Activity ได้ไม่เกิน 30 วัน ส่วน Admin ใช้ Follow-up และ Manual Notification ได้
 
 การเปลี่ยน Done เรียก `/api/completion` เพื่อเขียน Apps Script ก่อนอัปเดต snapshot+audit ใน transaction; ถ้าล้มเหลว frontend rollback ค่าทันที Active user ทุกคนแก้ workflow/note/priority/Done/assignment ได้ ส่วน Admin เท่านั้นที่แก้ users, Sheets, ทีม และ brand mapping Note ส่ง `expectedNoteVersion` และตอบ `409` พร้อมค่าล่าสุดเมื่อชนกัน รายการที่ save ไม่สำเร็จเก็บเป็น retry outbox เฉพาะ browser session
 
@@ -67,16 +73,24 @@ npm run security:scan:deployment -- https://your-preview-or-production.example
 1. เปิด `VITE_MAINTENANCE_MODE=true` และ deploy ก่อนเริ่มย้ายข้อมูล
 2. Revoke GitHub token เดิม, rotate Google API key และสร้าง Apps Script deployment/secret ใหม่
 3. Apply migrations, เปิด Google OAuth และรัน `npm run bootstrap:admin`
-4. Deploy Apps Script จาก `google-apps-script/Code.gs`, initial sync แล้ว migrate Gist
+4. Deploy Apps Script จาก `google-apps-script/Code.gs`, authorize Sheets + MailApp, initial sync แล้ว migrate Gist
 5. ตรวจ count ของ sheets/tasks/team/assignments/remarks และทดสอบ Employee/Manager/Admin บน Preview
 6. สร้าง Vault secrets, apply `supabase/cron.sql` และยืนยัน cron ที่ไม่มี secret/secret ผิดตอบ `401`
-7. ปิด Maintenance, deploy Production, smoke test `/api/sync` และเฝ้าดู `sync_runs`/`cron.job_run_details` 24 ชั่วโมง
-8. Revoke temporary Gist migration token และลบ migration variables จาก Vercel
+7. ตั้ง Notification Setup, ส่ง Test email, ตรวจ sender/Reply-To/quota และ preflight ก่อนเปิด Auto Send
+8. ปิด Maintenance, deploy Production, smoke test `/api/sync`, `/api/cron-notifications` และเฝ้าดู `sync_runs`/`cron.job_run_details` 24 ชั่วโมง
+9. Revoke temporary Gist migration token และลบ migration variables จาก Vercel
 
 ระบบจะ fail closed ใน production หาก Supabase frontend variables ไม่ครบ ส่วน server APIs จะปฏิเสธ request หาก server secret หรือ Apps Script secret ไม่ครบ
 
-Browser acceptance ต้องทดสอบด้วยบัญชี Employee, Manager และ Admin จริงหลังตั้ง Supabase โดยตรวจ role landing, Access Denied, My Work ownership, RLS, concurrent note, blocked/assignment notifications, sync cooldown/failure และ stale warning
+Browser acceptance ต้องทดสอบด้วยบัญชี Employee, Manager และ Admin จริงหลังตั้ง Supabase โดยตรวจ role landing, Access Denied, My Work ownership, RLS, concurrent note, Hold/assignment notifications, manual Refresh, sync cooldown/failure และ stale warning
 
 Pull request ต้องผ่าน `.github/workflows/ci.yml` ก่อน merge หาก smoke test ล้มเหลวให้ rollback ไป safe Maintenance deployment เท่านั้น ห้าม rollback ไป production build เก่าที่มี client credential
 
 Production URL: <https://timeline-dashboard-rose.vercel.app/>
+# Action history และ No Activity
+
+No Activity ใช้เวลา action ของงานล่าสุดครบ 120 ชั่วโมง: Done/เอาติ๊กออก, วันที่งานทุกช่อง, Workflow, Note, Priority, Next Action และการเปลี่ยนทีมโปรเจกต์ (เฉพาะงานที่ยังไม่เสร็จ) การเปลี่ยนรูปอยู่ใน log บุคคลและไม่เริ่มเวลาของงานใหม่ ประวัติเก็บ AE ณ เวลานั้นแยกจากผู้แก้จริง และแสดง “ไม่ทราบผู้แก้” เมื่อ Google ไม่ส่งตัวผู้แก้
+
+หน้า Follow-up, My Work และประวัติในรายละเอียดงานรีเฟรชทุก 30 วินาทีขณะเปิดหน้า พร้อมแสดงเวลา Last Action แยกจากเวลาที่ดึงข้อมูล การ sync อย่างเดียวไม่เพิ่ม action และไม่ล้าง Data Issues
+
+การเปิดใช้ต้องติดตั้ง migration `20260907100000_action_history.sql`, อัปเดต Apps Script และตั้ง `SHEET_ACTIVITY_SECRET` ตาม [คู่มือติดตั้งและทดสอบ](google-apps-script/README.md#เปิดการติดตาม-action) ก่อนกดเปิดการติดตามในหน้า Follow-up

@@ -1,13 +1,24 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react"
+import { Dialog } from "@base-ui/react/dialog"
+import { BuildingsIcon } from "@phosphor-icons/react/dist/csr/Buildings"
+import { CalendarBlankIcon } from "@phosphor-icons/react/dist/csr/CalendarBlank"
+import { GearSixIcon } from "@phosphor-icons/react/dist/csr/GearSix"
+import { FlagIcon } from "@phosphor-icons/react/dist/csr/Flag"
+import { PencilSimpleIcon } from "@phosphor-icons/react/dist/csr/PencilSimple"
+import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash"
+import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle"
+import { XIcon } from "@phosphor-icons/react/dist/csr/X"
 import { ROLE_CONFIG, ROLES, taskOwnerNames } from "../lib/teamConfig"
 import { extractBrandName } from "../lib/sheetsApi"
 import { filterDashboardTasks } from "../lib/dashboardFilters"
 import { normalizeBrandKey, tabKey, taskKey } from "../lib/sharedState"
-import { bangkokDate, daysFrom } from "../lib/dates"
+import { bangkokDate, daysFrom, formatThaiDate } from "../lib/dates"
 import { sortMonthLabels } from "../lib/workViews"
 import AssignTeam from "./AssignTeam"
 import Emoji from "./Emoji"
-import { emojiText } from "../lib/uiEmoji"
+import WorkflowSelect from "./WorkflowSelect"
+import { DASHBOARD_STATUS_OPTIONS, workflowLabel } from "../lib/workflowConfig"
+import { MILESTONE_TYPES, milestoneForTask, milestoneNeedsDate } from "../lib/brandTimeline"
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -22,8 +33,7 @@ function daysFromToday(dueDate) {
 }
 
 function fmtDate(iso) {
-  if (!iso) return "—"
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })
+  return formatThaiDate(iso, "—")
 }
 
 function fmtDayHeader(iso) {
@@ -55,12 +65,12 @@ function trendCount(metrics, status) {
 
 // ─── Sub-components ─────────────────────────────────────────────────────────────
 
-function StatCard({ icon, label, value, sub, color, onClick }) {
+function StatCard({ icon, label, value, sub, color, onClick, className = "" }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`ui-card ui-interactive ui-drilldown rounded-2xl text-left ${color.border} ${color.bg} p-5`}
+      className={`ui-card ui-interactive ui-drilldown text-left ${color.border} ${color.bg} p-5 ${className}`}
     >
       <div className="flex items-center gap-3">
         <div className={`ui-icon-tile flex h-10 w-10 items-center justify-center rounded-xl ${color.iconBg}`}>
@@ -126,9 +136,7 @@ function EditableClientName({ name, rawTabNames, onRename }) {
       title="คลิกเพื่อแก้ชื่อแบรนด์"
     >
       {name}
-      <svg className="inline-block ml-1 h-2.5 w-2.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-      </svg>
+      <PencilSimpleIcon aria-hidden="true" className="ml-1 inline-block text-gray-300" size={11} />
     </span>
   )
 }
@@ -140,17 +148,6 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
   const [editValue, setEditValue] = useState("")
   const [newConfirmName, setNewConfirmName] = useState({})
   const [expandedBrand, setExpandedBrand] = useState(null)
-  const closeRef = useRef(null)
-
-  useEffect(() => {
-    const previousFocus = document.activeElement
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    closeRef.current?.focus()
-    const keydown = (event) => { if (event.key === "Escape") onClose() }
-    document.addEventListener("keydown", keydown)
-    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", keydown); previousFocus?.focus?.() }
-  }, [onClose])
 
   const existingBrands = Object.keys(confirmed)
 
@@ -174,19 +171,19 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
   }
 
   return (
-    <div className="ui-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/35" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="brand-manager-title" className="ui-popover ui-modal-enter relative w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl" onClick={(e) => e.stopPropagation()}>
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose() }}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="ui-overlay-enter fixed inset-0 z-[var(--z-overlay)] bg-black/35" />
+        <Dialog.Popup className="ui-popover ui-modal-enter fixed left-1/2 top-1/2 z-[var(--z-modal)] max-h-[80dvh] w-[min(32rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto">
         {/* Header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-purple-100 bg-white px-5 py-4 rounded-t-2xl">
           <div>
             <h2 id="brand-manager-title" className="text-base font-bold text-purple-900">จัดการรายชื่อลูกค้า</h2>
             <p className="text-[11px] text-purple-300">ยืนยัน แก้ชื่อ รวม หรือลบแบรนด์</p>
           </div>
-          <button ref={closeRef} type="button" onClick={onClose} aria-label="ปิดหน้าจัดการแบรนด์" className="rounded-lg p-1.5 text-purple-300 transition hover:bg-purple-50 hover:text-purple-600">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <Dialog.Close type="button" aria-label="ปิดหน้าจัดการแบรนด์" className="ui-icon-button text-[var(--ui-muted)]">
+            <XIcon aria-hidden="true" size={19} weight="bold" />
+          </Dialog.Close>
         </div>
 
         <div className="p-5 space-y-5">
@@ -269,9 +266,7 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
                           title="คลิกเพื่อแก้ชื่อ"
                         >
                           {brand}
-                          <svg className="inline-block ml-1 h-2.5 w-2.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                          </svg>
+                          <PencilSimpleIcon aria-hidden="true" className="ml-1 inline-block text-gray-300" size={11} />
                         </button>
                       )}
                       {/* Tab count — click to expand */}
@@ -288,9 +283,7 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
                         className="shrink-0 rounded-md p-1 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
                         title="ลบแบรนด์"
                       >
-                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
+                        <TrashIcon aria-hidden="true" size={15} />
                       </button>
                     </div>
                     {/* Expanded: show individual tabs */}
@@ -310,8 +303,9 @@ function BrandManager({ confirmed, newTabs, onConfirm, onRename, onRemove, onClo
             )}
           </div>
         </div>
-      </div>
-    </div>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 
@@ -330,10 +324,10 @@ function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, o
       {/* Progress bar */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+          <div className="ui-progress-track h-2 flex-1">
             <div
-              className="h-full rounded-full transition-[width] duration-150"
-              style={{ width: `${barWidth}%`, backgroundColor: progressColor(pct) }}
+              className="ui-progress-fill rounded-full"
+              style={{ "--progress": barWidth / 100, backgroundColor: progressColor(pct) }}
             />
           </div>
           <span className="text-[11px] font-bold tabular-nums w-12 text-right" style={{ color: progressColor(pct) }}>
@@ -349,9 +343,7 @@ function ClientHealthRow({ name, rawTabNames, assignmentKey, legacyKey, stats, o
       <div className="flex w-full items-center justify-between text-center md:block md:w-16"><span className="text-[9px] font-bold uppercase text-gray-300 md:hidden">Overdue</span>
         {overdueCount > 0 ? (
           <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-600">
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
+            <WarningCircleIcon aria-hidden="true" size={13} weight="fill" />
             {overdueCount}
           </span>
         ) : (
@@ -428,23 +420,23 @@ function MemberCard({ member, stats, maxOverdue, onOpen }) {
       {/* Stacked bar */}
       {total > 0 ? (
         <>
-          <div className="flex h-2.5 rounded-full overflow-hidden bg-gray-100">
+          <div className="flex h-2.5 overflow-hidden rounded-full bg-gray-100">
             {stats.done > 0 && (
               <div
-                className="bg-green-400 transition-[width] duration-150"
-                style={{ width: `${(stats.done / total) * 100}%` }}
+                className="bg-green-400"
+                style={{ flexBasis: `${(stats.done / total) * 100}%` }}
               />
             )}
             {stats.pending > 0 && (
               <div
-                className="bg-blue-300 transition-[width] duration-150"
-                style={{ width: `${(stats.pending / total) * 100}%` }}
+                className="bg-blue-300"
+                style={{ flexBasis: `${(stats.pending / total) * 100}%` }}
               />
             )}
             {stats.overdue > 0 && (
               <div
-                className="bg-red-400 transition-[width] duration-150"
-                style={{ width: `${(stats.overdue / total) * 100}%` }}
+                className="bg-red-400"
+                style={{ flexBasis: `${(stats.overdue / total) * 100}%` }}
               />
             )}
           </div>
@@ -482,12 +474,10 @@ function OverdueItem({ task, brandName }) {
       <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${cls}`}>
         {absDays}d late <span className="text-[8px] uppercase opacity-70">{label}</span>
       </span>
-      {/* Client */}
-      <span className="shrink-0 rounded-full bg-purple-50 px-2 py-0.5 text-[9px] font-medium text-purple-500 max-w-20 truncate">
-        {brandName}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-extrabold text-purple-700">{brandName}</span>
+        <span className="block truncate text-[11px] text-gray-600">{task.topic}</span>
       </span>
-      {/* Topic */}
-      <span className="text-[11px] text-gray-600 truncate flex-1 min-w-0">{task.topic}</span>
       {/* Person */}
       <span className="text-[10px] text-gray-400 shrink-0 max-w-16 truncate">{task.responsibility}</span>
     </a>
@@ -513,10 +503,10 @@ function UpcomingDayGroup({ dateKey, tasks, brandNameForTask }) {
           return (
             <a key={taskKey(t)} href={`https://docs.google.com/spreadsheets/d/${t.spreadsheetId}/edit#gid=${t.sheetGid}`} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition hover:bg-purple-50/50">
               <span className={`h-2 w-2 rounded-full shrink-0 ${dotColor}`} />
-              <span className="shrink-0 rounded-full bg-purple-50 px-2 py-0.5 text-[9px] font-medium text-purple-500 max-w-20 truncate">
-                {brandNameForTask(t)}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-extrabold text-purple-700">{brandNameForTask(t)}</span>
+                <span className="block truncate text-[11px] text-gray-600">{t.topic}</span>
               </span>
-              <span className="text-[11px] text-gray-600 truncate flex-1 min-w-0">{t.topic}</span>
               <span className="text-[10px] text-gray-400 shrink-0">{t.responsibility}</span>
             </a>
           )
@@ -528,7 +518,10 @@ function UpcomingDayGroup({ dateKey, tasks, brandNameForTask }) {
 
 // ─── Deadline Roadmap ───────────────────────────────────────────────────────────
 
-function milestoneColor(task) {
+function milestoneColor(task, overrides = {}) {
+  const milestone = milestoneForTask(task, overrides)
+  if (milestone === "present_idea") return "#5f1684"
+  if (milestone === "draft_1") return "#245b9a"
   if (task.done) return "#15803d"
   if (task.workflowStatus === "blocked") return "#9f1239"
   if (task.workflowStatus === "waiting_client") return "#b54708"
@@ -544,7 +537,7 @@ const ZOOM_LEVELS = [
   { label: "All", days: 0 },
 ]
 
-function DeadlineRoadmap({ allTasks, brandNameForTask, assignedNames, onOpenTask, preferenceOwner }) {
+function DeadlineRoadmap({ allTasks, brandNameForTask, assignedNames, onOpenTask, preferenceOwner, contractEnds = {}, milestoneOverrides = {} }) {
   const scrollRef = useRef(null)
   const containerRef = useRef(null)
   const [zoomIdx, setZoomIdx] = useState(1) // default 3M
@@ -833,6 +826,8 @@ function DeadlineRoadmap({ allTasks, brandNameForTask, assignedNames, onOpenTask
 
             {/* Task rows */}
             {clients.map((c) => {
+              const contractEnd = groupMode === "brand" ? contractEnds[normalizeBrandKey(c.name)] : null
+              const contractPosition = contractEnd && dateRange ? ((new Date(`${contractEnd.endDate}T00:00:00Z`) - dateRange.min) / 86_400_000) * dayWidth : null
               return (
                 <div key={c.name} className="ui-roadmap-row relative border-b border-gray-50" style={{ height: ROW_HEIGHT }}>
                   {/* Grid lines */}
@@ -852,16 +847,17 @@ function DeadlineRoadmap({ allTasks, brandNameForTask, assignedNames, onOpenTask
                         type="button"
                         key={taskKey(t) || ti}
                         onClick={(event) => { event.stopPropagation(); onOpenTask?.(t) }}
-                        className="ui-milestone absolute top-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1"
+                        className={`ui-milestone absolute top-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1 ${milestoneForTask(t, milestoneOverrides) ? "brand-roadmap-key" : ""}`}
                         style={{
                           left: taskOffset - dotSize / 2,
                           width: dotSize, height: dotSize,
-                          backgroundColor: milestoneColor(t),
+                          backgroundColor: milestoneColor(t, milestoneOverrides),
                         }}
-                        title={`${t.topic} — ${t.done ? "Done" : "Pending"} (${new Date(t.dueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })})`}
+                        title={`${milestoneForTask(t, milestoneOverrides) ? `${milestoneForTask(t, milestoneOverrides).replaceAll("_", " ")} · ` : ""}${t.topic} — ${t.done ? "Done" : "Pending"} (${new Date(t.dueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })})`}
                       />
                     )
                   })}
+                  {contractPosition !== null && contractPosition >= 0 && contractPosition <= totalWidth && <div className="brand-roadmap-contract" style={{ left: contractPosition }} title={`${MILESTONE_TYPES.contract_end.label} · ${fmtDate(contractEnd.endDate)}`}><FlagIcon aria-hidden="true" size={12} /></div>}
                 </div>
               )
             })}
@@ -941,11 +937,14 @@ export default function DashboardView({
   dailyMetrics = [],
   taskEvents = [],
   syncStatus = null,
+  contractEnds = {},
+  milestoneOverrides = {},
   lastSynced = null,
   canAdmin = false,
   canManageAssignments = false,
   preferenceOwner = "local",
   onOpenTask,
+  onManageBrands,
 }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -1018,6 +1017,7 @@ export default function DashboardView({
   const overdue = useMemo(() => filteredTasks.filter((task) => !task.done && daysFromToday(task.dueDate) < 0), [filteredTasks])
   const upcoming = useMemo(() => filteredTasks.filter((task) => !task.done && daysFromToday(task.dueDate) >= 0), [filteredTasks])
   const unscheduled = useMemo(() => filteredTasks.filter((task) => !task.done && daysFromToday(task.dueDate) === null), [filteredTasks])
+  const missingMilestoneDates = useMemo(() => filteredTasks.filter((task) => milestoneNeedsDate(task, milestoneOverrides)), [filteredTasks, milestoneOverrides])
   const blocked = useMemo(() => filteredTasks.filter((task) => !task.done && task.workflowStatus === "blocked"), [filteredTasks])
   const waitingClient = useMemo(() => filteredTasks.filter((task) => !task.done && task.workflowStatus === "waiting_client"), [filteredTasks])
   const aging = useMemo(() => {
@@ -1159,17 +1159,7 @@ export default function DashboardView({
         </div>
         <label className="text-[10px] font-semibold text-gray-500">
           Status
-          <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} className="ui-field ml-1.5 min-h-0 px-2.5 py-1.5 text-xs text-gray-700">
-            <option value="all">All</option>
-            <option value="overdue">{emojiText("overdue", "Overdue")}</option>
-            <option value="upcoming">{emojiText("upcoming", "Upcoming")}</option>
-            <option value="done">{emojiText("done", "Done")}</option>
-            <option value="not_started">{emojiText("notStarted", "Not started")}</option>
-            <option value="in_progress">{emojiText("inProgress", "In progress")}</option>
-            <option value="waiting_client">{emojiText("waitingClient", "Waiting client")}</option>
-            <option value="blocked">{emojiText("blocked", "Blocked")}</option>
-            <option value="unscheduled">{emojiText("unscheduled", "Unscheduled")}</option>
-          </select>
+          <span className="ml-1.5 inline-block align-middle"><WorkflowSelect ariaLabel="Status" value={filters.status} options={DASHBOARD_STATUS_OPTIONS} onValueChange={(next) => setFilters((current) => ({ ...current, status: next }))} compact className="min-w-36" /></span>
         </label>
         <label className="text-[10px] font-semibold text-gray-500">
           Month
@@ -1210,11 +1200,12 @@ export default function DashboardView({
 
       {drilldown && <div className="ui-card ui-view-enter rounded-2xl border-purple-200 p-5">
         <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-purple-800">{drilldown.label} · {drilldown.tasks.length} tasks</h3><button onClick={() => setDrilldown(null)} className="ui-button ui-button-secondary min-h-0 px-2 py-1 text-xs">Close</button></div>
-        <div className="mt-3 max-h-64 divide-y divide-gray-50 overflow-y-auto">{drilldown.tasks.map((task) => <button type="button" onClick={() => onOpenTask?.(task)} key={taskKey(task)} className="ui-task-row flex w-full gap-3 px-2 py-2 text-left text-xs focus:outline-none focus:ring-2 focus:ring-purple-300"><span className="w-28 truncate font-semibold text-purple-600">{brandNameForTask(task)}</span><span className="flex-1 text-gray-600">{task.topic}</span><span className="text-gray-400">{fmtDate(task.dueDate)}</span></button>)}</div>
+        <div className="mt-3 max-h-64 divide-y divide-gray-50 overflow-y-auto">{drilldown.tasks.map((task) => <button type="button" onClick={() => onOpenTask?.(task)} key={taskKey(task)} className="ui-task-row flex w-full items-center gap-3 px-2 py-2 text-left text-xs focus:outline-none focus:ring-2 focus:ring-purple-300"><span className="min-w-0 flex-1"><span className="block truncate text-sm font-extrabold text-purple-700">{brandNameForTask(task)}</span><span className="block truncate text-xs text-gray-600">{task.topic}</span></span><span className="text-gray-400">{fmtDate(task.dueDate)}</span></button>)}</div>
       </div>}
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid auto-rows-min grid-cols-12 gap-3">
         <StatCard
+          className="col-span-12 min-h-44 sm:col-span-6 lg:col-span-6 lg:row-span-2"
           label="Overdue"
           value={overdue.length}
           sub={overdue.length > 0 ? `${overdue.length} tasks past deadline` : "All clear!"}
@@ -1225,23 +1216,21 @@ export default function DashboardView({
             iconBg: overdue.length > 0 ? "bg-red-100" : "bg-green-100",
             text: overdue.length > 0 ? "text-red-600" : "text-green-600",
           }}
-          icon={
-            <svg className={`h-5 w-5 ${overdue.length > 0 ? "text-red-500" : "text-green-500"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          }
+          icon={<WarningCircleIcon aria-hidden="true" className={overdue.length > 0 ? "text-red-500" : "text-green-500"} size={21} weight="duotone" />}
         />
 
         <StatCard
-          label="Blocked"
+          className="col-span-6 lg:col-span-3"
+          label="Hold"
           value={blocked.length}
           sub="Requires intervention"
-          onClick={() => openDrilldown("Blocked", blocked)}
+          onClick={() => openDrilldown("Hold", blocked)}
           color={{ bg: "bg-rose-50", border: "border-rose-200", iconBg: "bg-rose-100", text: "text-rose-700" }}
           icon={<span className="text-lg"><Emoji name="blocked" /></span>}
         />
 
         <StatCard
+          className="col-span-6 lg:col-span-3"
           label="Waiting Client"
           value={waitingClient.length}
           sub="Pending external response"
@@ -1251,6 +1240,7 @@ export default function DashboardView({
         />
 
         <StatCard
+          className="col-span-6 lg:col-span-2"
           label="Due This Week"
           value={metrics.dueThisWeek.length}
           sub="Next 7 days"
@@ -1259,14 +1249,10 @@ export default function DashboardView({
             bg: "bg-amber-50", border: "border-amber-200",
             iconBg: "bg-amber-100", text: "text-amber-600",
           }}
-          icon={
-            <svg className="h-5 w-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-          }
+          icon={<CalendarBlankIcon aria-hidden="true" className="text-amber-500" size={21} weight="duotone" />}
         />
 
-        <button type="button" onClick={() => openDrilldown("Completed", filteredTasks.filter((task) => task.done))} className="ui-card ui-interactive ui-drilldown rounded-2xl border-green-200 bg-green-50 p-5 text-left">
+        <button type="button" onClick={() => openDrilldown("Completed", filteredTasks.filter((task) => task.done))} className="ui-card ui-interactive ui-drilldown col-span-6 border-green-200 bg-green-50 p-5 text-left lg:col-span-2">
           <div className="flex items-center gap-3">
             <CompletionRing pct={metrics.completionPct} />
             <div>
@@ -1277,12 +1263,10 @@ export default function DashboardView({
           <div className="mt-2 text-[11px] text-gray-500">{metrics.totalDone} of {metrics.totalAll} tasks done</div>
         </button>
 
-        <div className="ui-card rounded-2xl p-5">
+        <div className="ui-card col-span-12 p-5 sm:col-span-6 lg:col-span-2">
           <div className="flex items-center gap-3">
             <div className="ui-icon-tile flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100">
-              <svg className="h-5 w-5 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-              </svg>
+              <BuildingsIcon aria-hidden="true" className="text-purple-500" size={21} weight="duotone" />
             </div>
             <div>
               <div key={metrics.activeClientNames.length} className="ui-data-change text-2xl font-black tabular-nums text-purple-700">{metrics.activeClientNames.length}</div>
@@ -1315,17 +1299,25 @@ export default function DashboardView({
           </button>
           {/* จัดการ button */}
           {canAdmin && <button
-            onClick={() => setShowBrandManager(true)}
+            onClick={() => onManageBrands ? onManageBrands() : setShowBrandManager(true)}
             className="mt-2 flex items-center gap-1 rounded-lg border border-purple-200 bg-white px-2 py-1 text-[10px] font-semibold text-purple-500 transition hover:bg-purple-50 active:scale-95"
           >
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
+            <GearSixIcon aria-hidden="true" size={14} />
             จัดการรายชื่อ
           </button>}
         </div>
       </div>
+
+      {/* Source data has deadlines but no start dates, so this is intentionally a deadline roadmap. */}
+      <section className="ui-card overflow-hidden" aria-labelledby="deadline-roadmap-title">
+        <div className="ui-section-header border-b border-[var(--ui-border)]">
+          <div className="ui-section-heading"><span className="h-2 w-2 rounded-full bg-[var(--ui-brand)]" /><h2 id="deadline-roadmap-title">Deadline Roadmap</h2></div>
+        </div>
+        <div className="relative p-3">
+          {missingMilestoneDates.length > 0 && <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700"><WarningCircleIcon aria-hidden="true" size={16} /> Present Idea/Draft 1 missing date: {missingMilestoneDates.length} งาน</div>}
+          <DeadlineRoadmap allTasks={filteredTasks} brandNameForTask={brandNameForTask} onOpenTask={onOpenTask} assignedNames={assignedNames} preferenceOwner={preferenceOwner} contractEnds={contractEnds} milestoneOverrides={milestoneOverrides} />
+        </div>
+      </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="ui-card rounded-2xl p-5">
@@ -1336,30 +1328,11 @@ export default function DashboardView({
         </div>
         <div className="ui-card rounded-2xl p-5">
           <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="trend" /> 12-Month Trend</h3>
-          {monthlyTrend.length ? <div className="mt-3 overflow-x-auto"><table className="w-full text-[10px]"><thead className="text-left text-gray-400"><tr><th>Month</th><th>Completion</th><th>Created</th><th>Resolved</th><th>Blocked</th><th>{filters.status === "all" ? "Workload" : filters.status.replaceAll("_", " ")}</th></tr></thead><tbody>{monthlyTrend.map(([month, row]) => { const metrics = row.metrics || {}; const completion = metrics.total ? Math.round((metrics.done / metrics.total) * 100) : 0; return <tr key={month} className="border-t border-gray-50"><td className="py-1.5 font-semibold text-gray-600">{month}</td><td>{completion}%</td><td>{metrics.overdueCreated || 0}</td><td>{metrics.overdueResolved || 0}</td><td>{metrics.blocked || 0}</td><td>{trendCount(metrics, filters.status)}</td></tr> })}</tbody></table><p className="mt-2 text-[9px] text-gray-300">Historical snapshot metrics; task-level history is not available.</p></div> : <p className="mt-4 text-xs text-gray-400">Trend starts after the first successful sync.</p>}
+          {monthlyTrend.length ? <div className="mt-3 overflow-x-auto"><table className="w-full text-[10px]"><thead className="text-left text-gray-400"><tr><th>Month</th><th>Completion</th><th>Created</th><th>Resolved</th><th>Hold</th><th>{filters.status === "all" ? "Workload" : workflowLabel(filters.status)}</th></tr></thead><tbody>{monthlyTrend.map(([month, row]) => { const metrics = row.metrics || {}; const completion = metrics.total ? Math.round((metrics.done / metrics.total) * 100) : 0; return <tr key={month} className="border-t border-gray-50"><td className="py-1.5 font-semibold text-gray-600">{month}</td><td>{completion}%</td><td>{metrics.overdueCreated || 0}</td><td>{metrics.overdueResolved || 0}</td><td>{metrics.blocked || 0}</td><td>{trendCount(metrics, filters.status)}</td></tr> })}</tbody></table><p className="mt-2 text-[9px] text-gray-300">Historical snapshot metrics; task-level history is not available.</p></div> : <p className="mt-4 text-xs text-gray-400">Trend starts after the first successful sync.</p>}
         </div>
       </div>
 
       <RecentActivity events={taskEvents} tasks={allTasks} />
-
-      {/* The source has due dates but no start dates: render a deadline roadmap, not a Gantt duration. */}
-      <div className="ui-card rounded-2xl">
-        <div className="px-5 py-4 border-b border-purple-50">
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-purple-400" />
-            <h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="roadmap" /> Deadline Roadmap</h3>
-          </div>
-        </div>
-        <div className="p-3 relative">
-          <DeadlineRoadmap
-            allTasks={filteredTasks}
-            brandNameForTask={brandNameForTask}
-            onOpenTask={onOpenTask}
-            assignedNames={assignedNames}
-            preferenceOwner={preferenceOwner}
-          />
-        </div>
-      </div>
 
       {/* ── ② Client Health + ③ Overdue ──────────────────────────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -1398,7 +1371,7 @@ export default function DashboardView({
                     teamMembers={teamMembers}
                     onUpdateAssignment={onUpdateAssignment}
                     canManageAssignments={canManageAssignments}
-                    onRename={canAdmin ? handleInlineRename : null}
+                    onRename={canAdmin && !onManageBrands ? handleInlineRename : null}
                     onOpen={() => openDrilldown(c.name, filteredTasks.filter((task) => brandNameForTask(task) === c.name))}
                   />
                 ))}
@@ -1504,7 +1477,7 @@ export default function DashboardView({
       </div>
 
       {/* ── Brand Manager Modal ─────────────────────────────────────── */}
-      {canAdmin && showBrandManager && (
+      {canAdmin && !onManageBrands && showBrandManager && (
         <BrandManager
           confirmed={brandData.confirmed}
           newTabs={brandData.newTabs}

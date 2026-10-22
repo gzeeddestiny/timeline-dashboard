@@ -1,0 +1,18 @@
+[
+  {
+    "url": "https://magic-timeline-dashboard.vercel.app/",
+    "newBuild": true
+  },
+  {
+    "url": "https://magic-timeline-dashboard.vercel.app/v2/",
+    "newBuild": true
+  },
+  {
+    "url": "https://magic-timeline-v2.vercel.app/",
+    "newBuild": true
+  },
+  {
+    "url": "https://magic-timeline-v2.vercel.app/v2/",
+    "newBuild": true
+  }
+]

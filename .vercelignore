@@ -1,0 +1,10 @@
+.env
+.env.*
+.playwright-cli
+scripts/evidence
+test-results
+playwright-report
+e2e
+test
+docs
+.local-migration/

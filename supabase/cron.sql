@@ -17,13 +17,15 @@ select cron.unschedule(jobid)
 from cron.job
 where jobname in (
   'timeline-dashboard-sync',
+  'timeline-dashboard-notifications',
   'timeline-dashboard-daily-digest',
+  'timeline-dashboard-contract-alerts',
   'timeline-retention'
 );
 
 select cron.schedule(
   'timeline-dashboard-sync',
-  '0 */3 * * *',
+  '25,55 * * * *',
   $$
     select net.http_post(
       url := (select decrypted_secret from vault.decrypted_secrets where name = 'timeline_dashboard_url') || '/api/cron-sync',
@@ -35,6 +37,28 @@ select cron.schedule(
       timeout_milliseconds := 55000
     );
   $$
+);
+
+select cron.schedule(
+  'timeline-dashboard-notifications',
+  '*/15 * * * *',
+  $$
+    select net.http_post(
+      url := (select decrypted_secret from vault.decrypted_secrets where name = 'timeline_dashboard_url') || '/api/cron-notifications',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'X-Cron-Secret', (select decrypted_secret from vault.decrypted_secrets where name = 'timeline_cron_secret')
+      ),
+      body := jsonb_build_object('scheduledAt', now()),
+      timeout_milliseconds := 55000
+    );
+  $$
+);
+
+select cron.schedule(
+  'timeline-dashboard-contract-alerts',
+  '0 2 * * *', -- 09:00 Asia/Bangkok
+  $$ select private.queue_contract_notifications(); $$
 );
 
 select cron.schedule(

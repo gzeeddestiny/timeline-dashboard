@@ -1,0 +1,69 @@
+{
+  "checkedAt": "2026-09-29T11:14:39.589Z",
+  "status": "transfer-blocked-by-source-grace-period",
+  "project": "micjfmxdpxeswcgciyjt",
+  "tables": [
+    {
+      "table": "tasks_current",
+      "before": 3439,
+      "count": 3439,
+      "error": null
+    },
+    {
+      "table": "task_workflow",
+      "before": 38,
+      "count": 38,
+      "error": null
+    },
+    {
+      "table": "team_members",
+      "before": 9,
+      "count": 9,
+      "error": null
+    },
+    {
+      "table": "access_list",
+      "before": 10,
+      "count": 10,
+      "error": null
+    },
+    {
+      "table": "sheets",
+      "before": 6,
+      "count": 6,
+      "error": null
+    },
+    {
+      "table": "assignments",
+      "before": 20,
+      "count": 20,
+      "error": null
+    },
+    {
+      "table": "brand_workstreams",
+      "before": 1,
+      "count": 1,
+      "error": null
+    },
+    {
+      "table": "contract_rounds",
+      "before": 0,
+      "count": 0,
+      "error": null
+    }
+  ],
+  "auth": {
+    "status": 200,
+    "googleEnabled": true
+  },
+  "domains": [
+    {
+      "url": "https://magic-timeline-dashboard.vercel.app/",
+      "status": 200
+    },
+    {
+      "url": "https://magic-timeline-v2.vercel.app/",
+      "status": 200
+    }
+  ]
+}

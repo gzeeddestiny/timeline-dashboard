@@ -1,7 +1,7 @@
 import { userContext, sameOrigin, send } from "./_supabase.js"
 import { assignmentRoleMembers } from "../src/lib/teamConfig.js"
 
-const ROLES = new Set(["creative", "ae", "media", "pm"])
+const ROLES = new Set(["creative", "graphic_editor", "cameraman", "ae", "media_planner", "media", "ads_optimizer", "pm"])
 
 export function validateAssignmentPatch(body) {
   const key = typeof body?.key === "string" ? body.key.trim() : ""

@@ -1,0 +1,69 @@
+{
+  "checkedAt": "2026-09-29T17:56:35.331062+00:00",
+  "deployment": {
+    "id": "dpl_HpMekyHWgnv7r7PBEJ6JU2frMw6Z",
+    "url": "https://magic-timeline-dashboard-32fxly8m8-gzeeddestiny-7573s-projects.vercel.app",
+    "inspectorUrl": "https://vercel.com/gzeeddestiny-7573s-projects/magic-timeline-dashboard/HpMekyHWgnv7r7PBEJ6JU2frMw6Z",
+    "readyState": "READY",
+    "target": "production",
+    "deploymentApiUrl": "https://api.vercel.com/v13/deployments/dpl_HpMekyHWgnv7r7PBEJ6JU2frMw6Z",
+    "buildMachine": {
+      "cores": 2,
+      "memory": 8192,
+      "machine": "basic",
+      "selectionType": "fixed",
+      "selectionSource": "plan-default"
+    }
+  },
+  "routes": [
+    {
+      "url": "https://magic-timeline-dashboard.vercel.app/",
+      "status": 200,
+      "title": "MAGIC Timeline Dashboard",
+      "entry": "/assets/main-DEFtLeDz.js"
+    },
+    {
+      "url": "https://magic-timeline-dashboard.vercel.app/v2",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/v2-CZ1nG7Nl.js"
+    },
+    {
+      "url": "https://magic-timeline-dashboard.vercel.app/v2/",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/v2-CZ1nG7Nl.js"
+    },
+    {
+      "url": "https://magic-timeline-dashboard.vercel.app/v2/gantt",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/v2-CZ1nG7Nl.js"
+    },
+    {
+      "url": "https://magic-timeline-v2.vercel.app/",
+      "status": 200,
+      "title": "MAGIC Timeline Dashboard",
+      "entry": "/assets/main-DEFtLeDz.js"
+    },
+    {
+      "url": "https://magic-timeline-v2.vercel.app/v2",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/v2-CZ1nG7Nl.js"
+    },
+    {
+      "url": "https://magic-timeline-v2.vercel.app/v2/",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/v2-CZ1nG7Nl.js"
+    },
+    {
+      "url": "https://magic-timeline-v2.vercel.app/v2/gantt",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/v2-CZ1nG7Nl.js"
+    }
+  ],
+  "supabaseProject": "qxlrleabulpqryduntwf"
+}

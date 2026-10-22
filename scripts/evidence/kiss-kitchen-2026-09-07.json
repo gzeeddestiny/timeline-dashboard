@@ -1,0 +1,50 @@
+[
+  {
+    "id": "verified_sheet:1VJ-eUD9fEUdk4v69uvr_rZTAfccqJRaU6PvoCBfESRI:3128:8cb491ff-d038-4006-8fd1-f6ecc01432ef:actual_submit",
+    "taskKey": "1VJ-eUD9fEUdk4v69uvr_rZTAfccqJRaU6PvoCBfESRI:1401318144:8cb491ff-d038-4006-8fd1-f6ecc01432ef",
+    "occurredAt": "2026-09-07T17:13:00+07:00",
+    "actorName": "Kunlaporn Ketnoi",
+    "brandName": "Kiss Kitchen",
+    "projectName": "Kiss Kitchen AW Content July 26",
+    "aeNames": [],
+    "changes": { "actual_submit": { "before": "2026-09-07", "after": "2026-09-08" } },
+    "evidenceSource": "sheet_version_history",
+    "timePrecision": "minute"
+  },
+  {
+    "id": "verified_sheet:1VJ-eUD9fEUdk4v69uvr_rZTAfccqJRaU6PvoCBfESRI:3128:b15b3153-57dd-477e-b6e2-2b5859bed7e3:actual_submit",
+    "taskKey": "1VJ-eUD9fEUdk4v69uvr_rZTAfccqJRaU6PvoCBfESRI:1401318144:b15b3153-57dd-477e-b6e2-2b5859bed7e3",
+    "occurredAt": "2026-09-07T17:13:00+07:00",
+    "actorName": "Kunlaporn Ketnoi",
+    "brandName": "Kiss Kitchen",
+    "projectName": "Kiss Kitchen AW Content July 26",
+    "aeNames": [],
+    "changes": { "actual_submit": { "before": "2026-09-08", "after": "2026-09-09" } },
+    "evidenceSource": "sheet_version_history",
+    "timePrecision": "minute"
+  },
+  {
+    "id": "verified_sheet:1VJ-eUD9fEUdk4v69uvr_rZTAfccqJRaU6PvoCBfESRI:3128:782affda-0079-48df-9839-c90ba65765b5:actual_submit",
+    "taskKey": "1VJ-eUD9fEUdk4v69uvr_rZTAfccqJRaU6PvoCBfESRI:1401318144:782affda-0079-48df-9839-c90ba65765b5",
+    "occurredAt": "2026-09-07T17:13:00+07:00",
+    "actorName": "Kunlaporn Ketnoi",
+    "brandName": "Kiss Kitchen",
+    "projectName": "Kiss Kitchen AW Content July 26",
+    "aeNames": [],
+    "changes": { "actual_submit": { "before": "2026-09-09", "after": "2026-09-10" } },
+    "evidenceSource": "sheet_version_history",
+    "timePrecision": "minute"
+  },
+  {
+    "id": "verified_sheet:1VJ-eUD9fEUdk4v69uvr_rZTAfccqJRaU6PvoCBfESRI:3128:5776f480-3943-43cd-8377-ffc05cf0cf3d:actual_submit",
+    "taskKey": "1VJ-eUD9fEUdk4v69uvr_rZTAfccqJRaU6PvoCBfESRI:1401318144:5776f480-3943-43cd-8377-ffc05cf0cf3d",
+    "occurredAt": "2026-09-07T17:13:00+07:00",
+    "actorName": "Kunlaporn Ketnoi",
+    "brandName": "Kiss Kitchen",
+    "projectName": "Kiss Kitchen AW Content July 26",
+    "aeNames": [],
+    "changes": { "actual_submit": { "before": "2026-09-10", "after": "2026-09-11" } },
+    "evidenceSource": "sheet_version_history",
+    "timePrecision": "minute"
+  }
+]

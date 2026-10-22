@@ -1,6 +1,6 @@
 import { callAppsScript } from "./_appsScript.js"
 import { sameOrigin, send, userContext } from "./_supabase.js"
-import { findTaskHeaderRow, taskRange } from "../src/lib/sheetSchema.js"
+import { columnName, findTaskHeaderRow, taskRange } from "../src/lib/sheetSchema.js"
 
 async function inspectTabs(spreadsheetId) {
   const key = process.env.GOOGLE_SHEETS_API_KEY
@@ -10,7 +10,7 @@ async function inspectTabs(spreadsheetId) {
   if (!metadata.ok) throw new Error(`Google Sheets metadata failed (${metadata.status})`)
   const meta = await metadata.json()
   const tabs = (meta.sheets || []).map(({ properties }) => properties).filter((tab) => !tab.hidden)
-  const ranges = tabs.map((tab) => `ranges=${encodeURIComponent(taskRange(tab.title, "A1:F15"))}`).join("&")
+  const ranges = tabs.map((tab) => `ranges=${encodeURIComponent(taskRange(tab.title, `A1:${columnName(tab.gridProperties?.columnCount || 26)}15`))}`).join("&")
   const valuesResponse = await fetch(`${base}/values:batchGet?${ranges}&majorDimension=ROWS&key=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(15_000) })
   if (!valuesResponse.ok) throw new Error(`Google Sheets headers failed (${valuesResponse.status})`)
   const values = await valuesResponse.json()

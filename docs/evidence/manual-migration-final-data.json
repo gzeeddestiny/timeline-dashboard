@@ -1,0 +1,194 @@
+[
+  {
+    "table": "auth.audit_log_entries",
+    "sourceRows": 0,
+    "targetRows": 0,
+    "match": true
+  },
+  {
+    "table": "auth.identities",
+    "sourceRows": 11,
+    "targetRows": 11,
+    "match": true
+  },
+  {
+    "table": "auth.users",
+    "sourceRows": 11,
+    "targetRows": 11,
+    "match": true
+  },
+  {
+    "table": "private.action_rollout_activity_backup_20260907",
+    "sourceRows": 3161,
+    "targetRows": 3161,
+    "match": true
+  },
+  {
+    "table": "private.action_rollout_function_backup_20260907",
+    "sourceRows": 4,
+    "targetRows": 4,
+    "match": true
+  },
+  {
+    "table": "public.access_list",
+    "sourceRows": 10,
+    "targetRows": 10,
+    "match": true
+  },
+  {
+    "table": "public.action_events",
+    "sourceRows": 921,
+    "targetRows": 921,
+    "match": true
+  },
+  {
+    "table": "public.assignments",
+    "sourceRows": 20,
+    "targetRows": 20,
+    "match": true
+  },
+  {
+    "table": "public.brand_catalog",
+    "sourceRows": 12,
+    "targetRows": 12,
+    "match": true
+  },
+  {
+    "table": "public.brand_workstream_sources",
+    "sourceRows": 0,
+    "targetRows": 0,
+    "match": true
+  },
+  {
+    "table": "public.brand_workstreams",
+    "sourceRows": 1,
+    "targetRows": 1,
+    "match": true
+  },
+  {
+    "table": "public.brands",
+    "sourceRows": 13,
+    "targetRows": 13,
+    "match": true
+  },
+  {
+    "table": "public.contract_rounds",
+    "sourceRows": 0,
+    "targetRows": 0,
+    "match": true
+  },
+  {
+    "table": "public.daily_metrics",
+    "sourceRows": 2736,
+    "targetRows": 2736,
+    "match": true
+  },
+  {
+    "table": "public.milestone_overrides",
+    "sourceRows": 0,
+    "targetRows": 0,
+    "match": true
+  },
+  {
+    "table": "public.notification_batches",
+    "sourceRows": 150,
+    "targetRows": 150,
+    "match": true
+  },
+  {
+    "table": "public.notification_deliveries",
+    "sourceRows": 130,
+    "targetRows": 130,
+    "match": true
+  },
+  {
+    "table": "public.notification_preferences",
+    "sourceRows": 1,
+    "targetRows": 1,
+    "match": true
+  },
+  {
+    "table": "public.notification_settings",
+    "sourceRows": 1,
+    "targetRows": 1,
+    "match": true
+  },
+  {
+    "table": "public.notification_templates",
+    "sourceRows": 4,
+    "targetRows": 4,
+    "match": true
+  },
+  {
+    "table": "public.notifications",
+    "sourceRows": 51,
+    "targetRows": 51,
+    "match": true
+  },
+  {
+    "table": "public.sheet_activity_health",
+    "sourceRows": 6,
+    "targetRows": 6,
+    "match": true
+  },
+  {
+    "table": "public.sheets",
+    "sourceRows": 6,
+    "targetRows": 6,
+    "match": true
+  },
+  {
+    "table": "public.sync_runs",
+    "sourceRows": 3418,
+    "targetRows": 3418,
+    "match": true
+  },
+  {
+    "table": "public.sync_stage_tasks",
+    "sourceRows": 18783,
+    "targetRows": 18783,
+    "match": true
+  },
+  {
+    "table": "public.task_activity_state",
+    "sourceRows": 3439,
+    "targetRows": 3439,
+    "match": true
+  },
+  {
+    "table": "public.task_aliases",
+    "sourceRows": 0,
+    "targetRows": 0,
+    "match": true
+  },
+  {
+    "table": "public.task_events",
+    "sourceRows": 556,
+    "targetRows": 556,
+    "match": true
+  },
+  {
+    "table": "public.task_workflow",
+    "sourceRows": 38,
+    "targetRows": 38,
+    "match": true
+  },
+  {
+    "table": "public.tasks_current",
+    "sourceRows": 3439,
+    "targetRows": 3439,
+    "match": true
+  },
+  {
+    "table": "public.team_members",
+    "sourceRows": 9,
+    "targetRows": 9,
+    "match": true
+  },
+  {
+    "table": "supabase_migrations.schema_migrations",
+    "sourceRows": 26,
+    "targetRows": 26,
+    "match": true
+  }
+]

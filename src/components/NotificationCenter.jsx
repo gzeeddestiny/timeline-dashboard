@@ -1,40 +1,31 @@
-import { useEffect, useRef, useState } from "react"
+import { Popover } from "@base-ui/react/popover"
+import { BellIcon } from "@phosphor-icons/react/dist/csr/Bell"
+import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle"
+import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle"
+import { useEffect, useState } from "react"
 import { listNotifications, markNotificationRead } from "../lib/fullSystem"
+import { formatThaiDateTime } from "../lib/dates"
 import { supabase } from "../lib/supabase"
-import Emoji from "./Emoji"
+import { Banner, Button, EmptyState } from "./ui"
 
-export default function NotificationCenter({ configured, email, onOpenTask }) {
+export default function NotificationCenter({ configured, email, onOpenTask, onOpenContract, onOpenAttention, triggerIcon: TriggerIcon = BellIcon }) {
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState([])
   const [error, setError] = useState("")
   const [failedRead, setFailedRead] = useState(null)
-  const containerRef = useRef(null)
-
-  useEffect(() => {
-    if (!open) return undefined
-    const close = (event) => {
-      if (event.type === "keydown" && event.key === "Escape") setOpen(false)
-      if (event.type === "pointerdown" && !containerRef.current?.contains(event.target)) setOpen(false)
-    }
-    document.addEventListener("keydown", close)
-    document.addEventListener("pointerdown", close)
-    return () => { document.removeEventListener("keydown", close); document.removeEventListener("pointerdown", close) }
-  }, [open])
 
   useEffect(() => {
     if (!configured || !email) return
     let active = true
-    const refresh = () => listNotifications().then((next) => { if (active) { setItems(next); setError("") } }).catch((loadError) => { if (active) setError(loadError.message) })
+    const refresh = () => { if (document.visibilityState === "hidden") return; return listNotifications().then((next) => { if (active) { setItems(next); setError("") } }).catch((loadError) => { if (active) setError(loadError.message) }) }
     refresh()
-    const timer = setInterval(refresh, 30_000)
+    const timer = setInterval(refresh, 120_000)
     const onVisible = () => { if (document.visibilityState === "visible") refresh() }
     window.addEventListener("focus", refresh)
     document.addEventListener("visibilitychange", onVisible)
     const channel = supabase.channel(`notifications:${email}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "notifications", filter: `recipient_email=eq.${email}` }, refresh)
-      .subscribe((status, channelError) => {
-        if (active && channelError) setError(`Realtime notification ขัดข้อง: ${channelError.message || status}`)
-      })
+      .subscribe((status, channelError) => { if (active && channelError) setError(`Realtime notification ขัดข้อง: ${channelError.message || status}`) })
     return () => {
       active = false
       clearInterval(timer)
@@ -59,28 +50,47 @@ export default function NotificationCenter({ configured, email, onOpenTask }) {
   }
   const openNotification = (item) => {
     if (item.task_key) { onOpenTask?.(item.task_key); setOpen(false) }
+    if (item.contract_id) { onOpenContract?.(item.contract_id); setOpen(false) }
+    const taskKeys = item.payload?.taskKeys || []
+    if (!item.task_key && taskKeys.length === 1) { onOpenTask?.(taskKeys[0]); setOpen(false) }
+    else if (!item.task_key && item.type === "no_activity_batch") {
+      window.history.replaceState(null, "", `${window.location.pathname}?view=my&attention=no_activity`)
+      onOpenAttention?.("no_activity")
+      setOpen(false)
+    } else if (!item.task_key && item.type === "manual_batch") {
+      window.history.replaceState(null, "", `${window.location.pathname}?view=my`)
+      onOpenAttention?.("manual")
+      setOpen(false)
+    } else if (item.type === "delivery_failure") { onOpenAttention?.("delivery_failure"); setOpen(false) }
     if (!item.read_at) markRead(item)
   }
+
   return (
-    <div ref={containerRef} className="relative">
-      {error && <div className="ui-popover fixed right-3 top-16 z-[12000] flex max-w-sm items-center gap-2 rounded-xl border-red-200 p-3 text-xs text-red-600"><span><Emoji name="warning" /> {error}</span>{failedRead && <button type="button" onClick={() => markRead(failedRead)} className="font-bold underline"><Emoji name="retry" /> Retry</button>}<button type="button" onClick={() => setError("")} aria-label="Dismiss notification error">✕</button></div>}
-      <button type="button" onClick={() => setOpen((value) => !value)} aria-label="Notifications" aria-expanded={open} aria-controls="notification-list" className="ui-button ui-button-secondary relative min-h-0 p-2 text-purple-500">
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 10-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m2 0v1a2 2 0 004 0v-1" /></svg>
-        {unread > 0 && <span className="absolute -right-1.5 -top-1.5 rounded-full bg-red-500 px-1.5 text-[9px] font-bold text-white">{unread}</span>}
-      </button>
-      {open && (
-        <div id="notification-list" className="ui-popover ui-popover-enter absolute right-0 top-11 z-[9999] w-80 overflow-hidden rounded-xl">
-          <div className="border-b border-purple-50 px-4 py-3 text-xs font-bold uppercase tracking-wider text-purple-500">Notifications</div>
-          <div className="max-h-80 overflow-y-auto">
-            {items.length === 0 ? <p className="p-6 text-center text-xs text-gray-300"><Emoji name="inbox" /> ไม่มี notification</p> : items.map((item) => (
-              <button key={item.id} onClick={() => openNotification(item)} className={`ui-task-row block w-full border-b border-gray-50 px-4 py-3 text-left ${item.read_at ? "bg-white" : "bg-purple-50/60"}`}>
-                <div className="text-xs font-medium text-gray-700">{item.message}</div>
-                <div className="mt-1 text-[10px] text-gray-400">{new Date(item.created_at).toLocaleString("th-TH")}</div>
-              </button>
-            ))}
-          </div>
-        </div>
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      {error && (
+        <Banner tone="danger" className="fixed right-3 top-20 z-[var(--z-alert)] max-w-sm" icon={<WarningCircleIcon size={20} />} actions={<><Button size="sm" variant="ghost" onClick={() => failedRead && markRead(failedRead)} disabled={!failedRead}>Retry</Button><Button size="sm" variant="ghost" onClick={() => setError("")}>ปิด</Button></>}>
+          <p className="text-xs">{error}</p>
+        </Banner>
       )}
-    </div>
+      <Popover.Trigger className="ui-icon-button relative" aria-label={`Notifications${unread ? ` ยังไม่อ่าน ${unread} รายการ` : ""}`}>
+        <TriggerIcon aria-hidden="true" size={19} />
+        {unread > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[var(--ui-danger)] px-1 text-center text-[9px] font-bold leading-4 text-white">{unread}</span>}
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner className="z-[var(--z-popover)]" sideOffset={8} align="end">
+          <Popover.Popup id="notification-list" className="ui-popover ui-popover-enter w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden" aria-label="Notifications">
+            <div className="flex items-center justify-between border-b border-[var(--ui-border)] px-4 py-3"><h2 className="text-sm font-bold text-[var(--ui-text)]">Notifications</h2>{unread > 0 && <span className="ui-badge ui-badge-danger">{unread} ใหม่</span>}</div>
+            <div className="max-h-[min(26rem,70vh)] overflow-y-auto">
+              {items.length === 0 ? <EmptyState icon={<CheckCircleIcon size={28} weight="duotone" />} title="ไม่มี notification" description="รายการใหม่จะแสดงที่นี่" className="border-0 py-10" /> : items.map((item) => (
+                <button key={item.id} onClick={() => openNotification(item)} className={`ui-task-row block w-full border-b border-[var(--ui-border)] px-4 py-3 text-left ${item.read_at ? "bg-white" : "bg-[var(--ui-brand-tint)]"}`}>
+                  <span className="block text-xs font-semibold text-[var(--ui-text)]">{item.message}</span>
+                  <span className="mt-1 block text-[11px] text-[var(--ui-muted)]">{formatThaiDateTime(item.created_at)}</span>
+                </button>
+              ))}
+            </div>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   )
 }

@@ -1,0 +1,42 @@
+{
+  "checkpoint": "7d",
+  "scheduledAt": "2026-10-05T19:28:46.515Z",
+  "clockVerifiedAt": "2026-10-05T19:28:56Z",
+  "status": "attempted-blocked-profile-access",
+  "measurementCompleted": false,
+  "doNotAutomaticallyRepeat": true,
+  "target": {
+    "organizationId": "kkfbtzszacajnhxkbyee",
+    "projectId": "qxlrleabulpqryduntwf",
+    "projectName": "timeline magic",
+    "productionCutoverAtApproximate": "2026-09-29T18:59:00+07:00",
+    "billingPeriodFromPriorVerifiedRead": ["2026-09-29", "2026-10-29"],
+    "currentEgressGB": null,
+    "currentLogIngestionGB": null,
+    "dailyRates": null,
+    "sessionStateVerified": false
+  },
+  "blocker": "Target gzeed5 Chrome profile was not exposed in browser inventory or native Window menu; native accessibility and screenshot became unavailable after retry.",
+  "historicalTargetSnapshot": {
+    "source": "usage-checkpoint-48h.json supplement",
+    "observedAt": "2026-10-01T19:30:38+07:00",
+    "egressGB": 0.073,
+    "logIngestionGB": 0.067,
+    "notCurrentUsage": true
+  },
+  "oldOrganization": {
+    "id": "idlloyglqrwztnnhklcl",
+    "billingResetDate": "2026-10-04",
+    "sourceTimelineProjectId": "micjfmxdpxeswcgciyjt",
+    "accountingProjectId": "rfvcsuwdplvovtljknoi",
+    "freshUsageReadPerformed": false
+  },
+  "savingsPercent": null,
+  "productionUsageSubstitutedWithFixtures": false,
+  "logQueriesPerformed": false,
+  "rawLogsExported": false,
+  "sourceResumed": false,
+  "businessDataOrSettingsChanged": false,
+  "followUp": "User can reopen the signed-in gzeed5 Supabase Chrome profile and request manual completion. No automatic retry.",
+  "requestedAutomationStatus": "PAUSED"
+}

@@ -11,7 +11,8 @@ export function validateWorkflow(body) {
   if (body.note !== undefined && (!Number.isInteger(body.expectedNoteVersion) || body.expectedNoteVersion < 0)) return "Invalid note version"
   if (body.forceNote !== undefined && typeof body.forceNote !== "boolean") return "Invalid note conflict option"
   if (body.priority !== undefined && body.priority !== null && !["normal", "high", "urgent"].includes(body.priority)) return "Invalid priority"
-  if (body.status === undefined && body.note === undefined && body.priority === undefined) return "No changes supplied"
+  if (body.nextAction !== undefined && (typeof body.nextAction !== "string" || body.nextAction.length > 2000)) return "Invalid next action"
+  if (body.status === undefined && body.note === undefined && body.priority === undefined && body.nextAction === undefined) return "No changes supplied"
   return null
 }
 
@@ -24,6 +25,8 @@ export function workflowRpcArgs(body, actorId) {
     p_has_note: body.note !== undefined,
     p_priority: body.priority ?? null,
     p_has_priority: body.priority !== undefined,
+    p_next_action: body.nextAction ?? null,
+    p_has_next_action: body.nextAction !== undefined,
     p_actor: actorId,
     p_expected_note_version: body.expectedNoteVersion ?? null,
     p_force_note: body.forceNote === true,
@@ -50,7 +53,7 @@ async function notifyBlocked(admin, task, actorEmail) {
   if (recipients.length === 0) recipients = (access || []).filter((entry) => entry.email !== actorEmail && ["manager", "admin"].includes(entry.role))
   if (recipients.length === 0) return
 
-  const message = `${brandName}: ${task.topic} ถูกเปลี่ยนเป็น Blocked`
+  const message = `${brandName}: ${task.topic} ถูกเปลี่ยนเป็น Hold`
   const result = await admin.from("notifications").insert(recipients.map((entry) => ({ recipient_email: entry.email, type: "blocked", task_key: task.task_key, message })))
   if (result.error) throw result.error
 }
@@ -70,7 +73,7 @@ export default async function handler(request, response) {
     if (taskError) throw taskError
     if (!task) return send(response, 404, { error: "Task not found" })
     if (!task.active) return send(response, 409, { error: "Task unavailable" })
-    const { data: existing, error: existingError } = await admin.from("task_workflow").select("status,note,note_version,updated_at").eq("task_key", body.key).maybeSingle()
+    const { data: existing, error: existingError } = await admin.from("task_workflow").select("status,note,next_action,note_version,updated_at").eq("task_key", body.key).maybeSingle()
     if (existingError) throw existingError
     if (body.note !== undefined && !body.forceNote && body.expectedNoteVersion !== (existing?.note_version || 0)) {
       return send(response, 409, { error: "Note changed since it was opened", currentNote: existing?.note || "", noteVersion: existing?.note_version || 0, updatedAt: existing?.updated_at || null })

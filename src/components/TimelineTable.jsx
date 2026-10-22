@@ -1,10 +1,20 @@
 import { useState, Fragment, useMemo, useRef } from "react"
+import { ArticleIcon } from "@phosphor-icons/react/dist/csr/Article"
+import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight"
+import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle"
+import { CheckIcon } from "@phosphor-icons/react/dist/csr/Check"
+import { FlagIcon } from "@phosphor-icons/react/dist/csr/Flag"
+import { LinkIcon } from "@phosphor-icons/react/dist/csr/Link"
+import { XIcon } from "@phosphor-icons/react/dist/csr/X"
 import { buildFileColorMap } from "../lib/sheetsApi"
-import { taskKey as sharedTaskKey } from "../lib/sharedState"
-import { daysFrom } from "../lib/dates"
+import { normalizeBrandKey, taskKey as sharedTaskKey } from "../lib/sharedState"
+import { daysFrom, formatThaiDate } from "../lib/dates"
 import AssignTeam from "./AssignTeam"
 import Emoji from "./Emoji"
+import WorkflowSelect from "./WorkflowSelect"
+import { workflowLabel, workflowTone } from "../lib/workflowConfig"
 import { emojiText } from "../lib/uiEmoji"
+import { MILESTONE_TYPES, milestoneForTask, milestoneNeedsDate } from "../lib/brandTimeline"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -22,8 +32,7 @@ function groupByClient(tasks) {
 }
 
 function fmtDate(iso) {
-  if (!iso) return "—"
-  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+  return formatThaiDate(iso, "—")
 }
 
 /** Smooth red→yellow→green color based on completion % */
@@ -35,11 +44,7 @@ function progressColor(pct) {
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
 function SheetTabIcon() {
-  return (
-    <svg className="h-3 w-3 shrink-0 text-purple-400" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-7 14H7v-2h5v2zm5-4H7v-2h10v2zm0-4H7V7h10v2z"/>
-    </svg>
-  )
+  return <ArticleIcon aria-hidden="true" className="shrink-0 text-purple-400" size={13} weight="fill" />
 }
 
 function TaskDetailButton({ task, onOpen }) {
@@ -52,14 +57,14 @@ function TaskDetailButton({ task, onOpen }) {
 }
 
 function ChevronIcon({ open }) {
-  return (
-    <svg
-      className={`h-3.5 w-3.5 shrink-0 text-purple-300 transition-transform duration-200 ${open ? "rotate-90" : ""}`}
-      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-    </svg>
-  )
+  return <CaretRightIcon aria-hidden="true" className={`shrink-0 text-purple-300 transition-transform duration-200 ${open ? "rotate-90" : ""}`} size={15} weight="bold" />
+}
+
+function MilestoneBadge({ task, overrides }) {
+  const milestone = milestoneForTask(task, overrides)
+  if (!milestone) return null
+  const config = MILESTONE_TYPES[milestone]
+  return <span className="inline-flex items-center gap-1"><span className={`brand-milestone-badge ${config.className}`} title={config.label}><span aria-hidden="true">{config.icon}</span><span>{config.shortLabel}</span></span>{milestoneNeedsDate(task, overrides) && <span className="brand-milestone-missing-date">Missing date</span>}</span>
 }
 
 // ─── Cell Components ──────────────────────────────────────────────────────────
@@ -87,7 +92,7 @@ function StatusToggleCell({ task, onToggle, compact, editable = true }) {
     if (editable && onToggle) onToggle(task, !task.done)
   }
   return (
-    <td className={compact ? "px-4 py-2.5" : "px-4 py-4"}>
+    <td className={`${compact ? "px-4 py-2.5" : "px-4 py-4"} sticky left-0 z-[1] bg-inherit`}>
       <button
         type="button"
         onClick={handleClick}
@@ -98,18 +103,22 @@ function StatusToggleCell({ task, onToggle, compact, editable = true }) {
           task.done ? "bg-green-100 hover:bg-green-200" : "bg-red-100 hover:bg-red-200"
         }`}
       >
-        {task.done ? (
-          <svg className={`text-green-600 ${icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-        ) : (
-          <svg className={`text-red-400 ${icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        )}
+        {task.done ? <CheckIcon aria-hidden="true" className={`text-green-600 ${icon}`} weight="bold" /> : <XIcon aria-hidden="true" className={`text-red-400 ${icon}`} weight="bold" />}
       </button>
     </td>
   )
+}
+
+function DueRiskCell({ task, compact = false }) {
+  const days = daysFromToday(task.dueDate)
+  const pad = compact ? "px-4 py-2.5" : "px-4 py-4"
+  let risk = <span className="ui-badge ui-badge-neutral">ยังไม่มีกำหนด</span>
+  if (task.done) risk = <span className="ui-badge ui-badge-success"><Emoji name="done" /> Done</span>
+  else if (days !== null && days < 0) risk = <span className="ui-badge ui-badge-danger"><Emoji name="overdue" /> เกิน {Math.abs(days)} วัน</span>
+  else if (days === 0) risk = <span className="ui-badge ui-badge-warning"><Emoji name="dueToday" /> วันนี้</span>
+  else if (days !== null && days <= 7) risk = <span className="ui-badge ui-badge-warning">อีก {days} วัน</span>
+  else if (days !== null) risk = <span className="ui-badge ui-badge-success">อีก {days} วัน</span>
+  return <td className={pad}><div className="whitespace-nowrap text-xs font-semibold text-[var(--ui-text)]">{fmtDate(task.dueDate)}</div><div className="mt-1">{risk}</div></td>
 }
 
 function ActualSubmitCell({ actualSubmit, compact }) {
@@ -166,13 +175,6 @@ function DaysLateCell({ dueDate, done, compact }) {
   )
 }
 
-const WORKFLOW_OPTIONS = [
-  ["not_started", emojiText("notStarted", "Not started")],
-  ["in_progress", emojiText("inProgress", "In progress")],
-  ["waiting_client", emojiText("waitingClient", "Waiting client")],
-  ["blocked", emojiText("blocked", "Blocked")],
-]
-
 function WorkflowCell({ task, workflow, onUpdate, saveStatus, compact, editable = true }) {
   const key = sharedTaskKey(task)
   const value = workflow[key] || "not_started"
@@ -180,14 +182,13 @@ function WorkflowCell({ task, workflow, onUpdate, saveStatus, compact, editable 
     <td className={compact ? "px-3 py-2.5" : "px-3 py-4"} onClick={(event) => event.stopPropagation()}>
       {task.done ? <span className="text-xs font-semibold text-green-600"><Emoji name="done" /> Done</span> : (
         <div className="flex items-center gap-1">
-          <select
+          <WorkflowSelect
             value={value}
             disabled={!editable}
-            onChange={(event) => onUpdate?.(key, event.target.value)}
-            className={`ui-field min-h-0 px-2 py-1 text-[11px] font-medium text-gray-600 ${saveStatus === "failed" ? "border-red-300" : ""}`}
-          >
-            {WORKFLOW_OPTIONS.map(([option, label]) => <option key={option} value={option}>{label}</option>)}
-          </select>
+            onValueChange={(next) => onUpdate?.(key, next)}
+            compact
+            className={`min-w-36 ${saveStatus === "failed" ? "border-red-300" : ""}`}
+          />
           {saveStatus === "saving" && <span className="text-[9px] text-purple-700">Saving…</span>}
           {saveStatus === "failed" && <button type="button" onClick={() => onUpdate?.(key, value)} className="text-[9px] font-semibold text-red-500"><Emoji name="retry" /> Retry</button>}
         </div>
@@ -288,9 +289,7 @@ function RemarkCell({ taskKey, legacyKey, remarks, onUpdate, saveStatus, compact
               aria-label="Clear note"
               className="shrink-0 rounded p-1 text-gray-300 hover:text-red-500 focus-visible:text-red-500 disabled:hidden"
             >
-              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
+              <XIcon aria-hidden="true" size={13} weight="bold" />
             </button>
           </>
         ) : (
@@ -318,10 +317,10 @@ function ProgressBar({ stats }) {
   const color = progressColor(pct)
   return (
     <div className="mt-1.5 flex items-center gap-2">
-      <div className="h-1.5 w-20 overflow-hidden rounded-full bg-gray-100">
+      <div className="ui-progress-track h-1.5 w-20">
         <div
-          className="h-full rounded-full transition-[width] duration-150"
-          style={{ width: `${pct}%`, backgroundColor: color }}
+          className="ui-progress-fill rounded-full"
+          style={{ "--progress": pct / 100, backgroundColor: color }}
         />
       </div>
       <span className="text-[10px] font-bold tabular-nums" style={{ color }}>
@@ -350,7 +349,7 @@ function SkeletonRow() {
   )
 }
 
-function MobileTaskCard({ task, brandName, onOpen, onToggle, workflow, priorities, editable }) {
+function MobileTaskCard({ task, brandName, onOpen, onToggle, workflow, priorities, editable, milestoneOverrides = {} }) {
   const key = sharedTaskKey(task)
   const priority = normalizePriority(priorities[key])
   const late = daysFromToday(task.dueDate)
@@ -360,18 +359,18 @@ function MobileTaskCard({ task, brandName, onOpen, onToggle, workflow, prioritie
     <article className={`ui-card ui-interactive rounded-2xl p-4 ${priority === "urgent" ? "priority-urgent border-red-200" : priority === "high" ? "priority-high border-amber-200" : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-purple-500">
-            <span>{brandName}</span><span>·</span><span>{task.month || "No month"}</span>
+          <div className="flex flex-wrap items-center gap-1.5 text-sm font-extrabold text-purple-900">
+            <span>{brandName}</span><span className="text-[10px] font-medium uppercase text-purple-400">· {task.month || "No month"}</span>
             {priority !== "normal" && <span className={priority === "urgent" ? "text-red-600" : "text-amber-600"}><Emoji name={priority} /> {priority}</span>}
           </div>
-          <h3 className="mt-1 text-sm font-bold text-gray-800">{task.topic}</h3>
+          <h3 className="mt-1 text-xs font-medium text-gray-700"><MilestoneBadge task={task} overrides={milestoneOverrides} />{task.topic}</h3>
           <p className="mt-1 text-xs text-gray-500">{task.responsibility || "ยังไม่ระบุผู้รับผิดชอบ"}</p>
         </div>
         <button type="button" disabled={!editable} onClick={() => onToggle?.(task, !task.done)} aria-label={task.done ? "Mark not done" : "Mark done"} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold disabled:opacity-40 ${task.done ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}>{task.done ? "✓" : "○"}</button>
       </div>
       <div className="mt-3 flex items-center gap-2 text-[11px]">
-        <span className="rounded-full bg-white/80 px-2 py-1 font-semibold text-gray-600">{emojiText(workflowEmoji, workflowValue.replaceAll("_", " "))}</span>
-        <span className={late !== null && late < 0 && !task.done ? "font-bold text-red-600" : "text-gray-400"}>{task.dueDate ? late < 0 && !task.done ? <><Emoji name="overdue" /> {Math.abs(late)} days late</> : <><Emoji name="upcoming" /> Due {fmtDate(task.dueDate)}</> : <><Emoji name="unscheduled" /> Unscheduled</>}</span>
+        <span data-workflow-tone={workflowTone(workflowValue)} className="workflow-tone rounded-full px-2 py-1 font-semibold">{emojiText(workflowEmoji, workflowLabel(workflowValue))}</span>
+        <span className={late !== null && late < 0 && !task.done ? "font-bold text-red-600" : "text-gray-400"}>{task.dueDate ? late < 0 && !task.done ? <><Emoji name="overdue" /> เกินกำหนด {Math.abs(late)} วัน</> : <><Emoji name="upcoming" /> {fmtDate(task.dueDate)}</> : <><Emoji name="unscheduled" /> ยังไม่มีกำหนด</>}</span>
         <button type="button" onClick={() => onOpen?.(task)} className="ui-button ui-button-primary ml-auto px-3 py-2 font-bold">รายละเอียด</button>
       </div>
     </article>
@@ -380,7 +379,7 @@ function MobileTaskCard({ task, brandName, onOpen, onToggle, workflow, prioritie
 
 // ─── TaskTable ────────────────────────────────────────────────────────────────
 
-export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, clientStats = {}, remarks = {}, onUpdateRemark, priorities = {}, onUpdatePriority, assignments = {}, onUpdateAssignment, teamMembers = [], brandNameForTask = (task) => task.clientName, assignmentKeyForTask = (task) => task.clientName, saveStatus = {}, onToggle, onOpenTask, workflow = {}, onUpdateWorkflow, canManageAssignments = true, canEditTask = () => true }) {
+export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, clientStats = {}, remarks = {}, onUpdateRemark, priorities = {}, onUpdatePriority, assignments = {}, onUpdateAssignment, teamMembers = [], brandNameForTask = (task) => task.clientName, assignmentKeyForTask = (task) => task.clientName, saveStatus = {}, onToggle, onOpenTask, workflow = {}, onUpdateWorkflow, canManageAssignments = true, canEditTask = () => true, contractEndByBrand = {}, milestoneOverrides = {} }) {
   const [expanded, setExpanded] = useState(new Set())
   const fileColorMap = useMemo(() => buildFileColorMap(tasks), [tasks])
 
@@ -404,25 +403,23 @@ export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, 
       </div>
 
       <div className="space-y-2 sm:hidden">
-        {isLoading ? <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]">Loading…</div> : tasks.length ? tasks.map((task) => <MobileTaskCard key={sharedTaskKey(task)} task={task} brandName={brandNameForTask(task)} onOpen={onOpenTask} onToggle={onToggle} workflow={workflow} priorities={priorities} editable={canEditTask(task)} />) : <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]"><Emoji name="search" /> No tasks found</div>}
+        {isLoading ? <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]">Loading…</div> : tasks.length ? tasks.map((task) => <MobileTaskCard key={sharedTaskKey(task)} task={task} brandName={brandNameForTask(task)} onOpen={onOpenTask} onToggle={onToggle} workflow={workflow} priorities={priorities} editable={canEditTask(task)} milestoneOverrides={milestoneOverrides} />) : <div className="ui-card rounded-2xl p-6 text-center text-sm text-[var(--ui-muted)]"><Emoji name="search" /> No tasks found</div>}
       </div>
 
-      <div className="ui-card hidden overflow-x-auto rounded-2xl sm:block">
-        <table className="w-full text-sm">
+      <div className="ui-card ui-data-table-shell hidden overflow-x-auto sm:block">
+        <table className="ui-data-table w-full text-sm">
           <thead>
             <tr className="border-b border-[var(--ui-border)] bg-[var(--ui-surface-subtle)] text-left text-[11px] font-bold uppercase tracking-wider text-[var(--ui-muted)]">
-              <th className="px-4 py-4">Status</th>
+              <th className="sticky left-0 z-[2] bg-[var(--ui-surface-subtle)] px-4 py-4">Status</th>
+              <th className="sticky left-[60px] z-[2] min-w-72 bg-[var(--ui-surface-subtle)] px-5 py-4">Task &amp; Client</th>
+              <th className="px-4 py-4">Due &amp; Risk</th>
               <th className="px-3 py-4">Workflow</th>
-              <th className="px-5 py-4">Month</th>
-              <th className="px-6 py-4">
-                <span className="flex items-center gap-1.5"><SheetTabIcon />Client Name</span>
-              </th>
-              <th className="px-6 py-4">Content / Topic</th>
-              <th className="px-6 py-4">Responsibility</th>
-              <th className="px-6 py-4">Due Date</th>
-              <th className="px-5 py-4">Actual Submit</th>
-              <th className="px-6 py-4">Days Late</th>
-              <th className="px-4 py-4"><Emoji name="remark" /> Remark</th>
+              <th className="px-4 py-4">Priority</th>
+              <th className="px-5 py-4">Responsibility</th>
+              <th className="px-4 py-4">Team</th>
+              <th className="px-4 py-4">Month</th>
+              <th className="px-5 py-4">Actual submit</th>
+              <th className="px-4 py-4"><Emoji name="remark" /> Note &amp; actions</th>
             </tr>
           </thead>
 
@@ -454,6 +451,7 @@ export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, 
               const firstLegacyKey = `${rawClientName}::${first.topic}`
               const firstPriorityCls = getPriorityClass(firstPriorityKey, firstLegacyKey, priorities)
               const firstEditable = canEditTask(first)
+              const contractEnd = contractEndByBrand[normalizeBrandKey(clientName)]
 
               return (
                 <Fragment key={groupKey}>
@@ -462,15 +460,13 @@ export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, 
                     className={`ui-task-row ${firstPriorityCls || rowBg}`}
                   >
                     <StatusToggleCell task={first} onToggle={onToggle} editable={firstEditable} />
-                    <WorkflowCell task={first} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${firstPriorityKey}`]} editable={firstEditable} />
-                    <MonthCell month={first.month} />
 
-                    {/* Client Name + Progress Bar */}
-                    <td className="px-6 py-4">
+                    {/* Sticky task identity: brand first, then task. */}
+                    <td className="sticky left-[60px] z-[1] min-w-72 bg-inherit px-5 py-4">
                       <div className="flex items-start gap-2">
                         {hasMore ? <button type="button" onClick={() => toggle(groupKey)} aria-label={`${isOpen ? "Collapse" : "Expand"} ${clientName}`} aria-expanded={isOpen} className="rounded p-1 hover:bg-purple-100 focus:outline-none focus:ring-2 focus:ring-purple-300"><ChevronIcon open={isOpen} /></button> : <span className="w-5 shrink-0" />}
                         <div className="min-w-0">
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700">
+                          <span className="inline-flex flex-wrap items-center gap-1.5 text-sm font-extrabold text-purple-900">
                             <SheetTabIcon />
                             {clientName}
                             {hasMore && (
@@ -478,46 +474,20 @@ export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, 
                                 {clientTasks.length}
                               </span>
                             )}
+                            {contractEnd && <span className="brand-contract-header-badge"><FlagIcon aria-hidden="true" size={11} /> End {fmtDate(contractEnd.endDate)}</span>}
                           </span>
+                          <div className="mt-1 text-xs font-medium text-[var(--ui-text)]"><MilestoneBadge task={first} overrides={milestoneOverrides} />{first.topic}<TaskDetailButton task={first} onOpen={onOpenTask} /><a href={`https://docs.google.com/spreadsheets/d/${first.spreadsheetId}/edit#gid=${first.sheetGid}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="ml-2 text-[10px] font-semibold text-[var(--ui-info)] hover:underline">Sheet</a></div>
                           <ProgressBar stats={stats} />
                         </div>
-                        {canManageAssignments && <AssignTeam
-                          displayName={clientName}
-                          assignmentKey={assignmentKey}
-                          legacyKey={rawClientName}
-                          assignments={assignments}
-                          members={teamMembers}
-                          onUpdate={onUpdateAssignment || (() => {})}
-                          compact
-                        />}
-                        <PriorityToggle
-                          taskKey={firstPriorityKey}
-                          legacyKey={firstLegacyKey}
-                          priorities={priorities}
-                          onUpdate={onUpdatePriority || (() => {})}
-                          editable={firstEditable}
-                        />
                       </div>
                     </td>
-
-                    <td className="px-6 py-4 font-medium text-gray-800">
-                      {first.topic}
-                      <TaskDetailButton task={first} onOpen={onOpenTask} />
-                      <a
-                        href={`https://docs.google.com/spreadsheets/d/${first.spreadsheetId}/edit#gid=${first.sheetGid}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="ml-1.5 inline-block text-gray-300 hover:text-blue-500 transition-colors"
-                        title="Open in Google Sheets"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <svg className="w-3.5 h-3.5 inline" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101" /><path strokeLinecap="round" strokeLinejoin="round" d="M10.172 13.828a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.102 1.101" /></svg>
-                      </a>
-                    </td>
-                    <td className="px-6 py-4 text-gray-500">{first.responsibility}</td>
-                    <td className="px-6 py-4 text-gray-500">{fmtDate(first.dueDate)}</td>
+                    <DueRiskCell task={first} />
+                    <WorkflowCell task={first} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${firstPriorityKey}`]} editable={firstEditable} />
+                    <td className="px-4 py-4"><PriorityToggle taskKey={firstPriorityKey} legacyKey={firstLegacyKey} priorities={priorities} onUpdate={onUpdatePriority || (() => {})} editable={firstEditable} /></td>
+                    <td className="px-5 py-4 text-gray-500">{first.responsibility || "—"}</td>
+                    <td className="px-4 py-4">{canManageAssignments ? <AssignTeam displayName={clientName} assignmentKey={assignmentKey} legacyKey={rawClientName} assignments={assignments} members={teamMembers} onUpdate={onUpdateAssignment || (() => {})} compact /> : "—"}</td>
+                    <MonthCell month={first.month} />
                     <ActualSubmitCell actualSubmit={first.actualSubmit} />
-                    <DaysLateCell dueDate={first.dueDate} done={first.done} />
                     <RemarkCell
                       taskKey={firstPriorityKey}
                       legacyKey={firstLegacyKey}
@@ -537,13 +507,9 @@ export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, 
                     return (
                     <tr key={subPriorityKey} className={`ui-task-row ${subPriorityCls || subBg}`}>
                       <StatusToggleCell task={task} onToggle={onToggle} compact editable={subEditable} />
-                      <WorkflowCell task={task} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${subPriorityKey}`]} compact editable={subEditable} />
-                      <MonthCell month={task.month} compact />
-                      <td className="py-2.5 pl-14 pr-6">
-                        <span className="text-xs text-purple-200">└</span>
-                      </td>
-                      <td className="px-6 py-2.5 text-gray-600">
-                        {task.topic}
+                      <td className="sticky left-[60px] z-[1] min-w-72 bg-inherit py-2.5 pl-10 pr-5 text-gray-600">
+                        <div className="text-sm font-extrabold text-purple-900">{brandNameForTask(task)}</div>
+                        <span className="mt-1 block text-xs font-medium"><MilestoneBadge task={task} overrides={milestoneOverrides} />{task.topic}</span>
                         <TaskDetailButton task={task} onOpen={onOpenTask} />
                         <a
                           href={`https://docs.google.com/spreadsheets/d/${task.spreadsheetId}/edit#gid=${task.sheetGid}`}
@@ -553,13 +519,16 @@ export default function TaskTable({ title, titleEmoji, badge, tasks, isLoading, 
                           title="Open in Google Sheets"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <svg className="w-3 h-3 inline" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101" /><path strokeLinecap="round" strokeLinejoin="round" d="M10.172 13.828a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.102 1.101" /></svg>
+                          <LinkIcon aria-hidden="true" className="inline" size={13} />
                         </a>
                       </td>
-                      <td className="px-6 py-2.5 text-gray-400">{task.responsibility}</td>
-                      <td className="px-6 py-2.5 text-gray-400">{fmtDate(task.dueDate)}</td>
+                      <DueRiskCell task={task} compact />
+                      <WorkflowCell task={task} workflow={workflow} onUpdate={onUpdateWorkflow} saveStatus={saveStatus[`workflow:${subPriorityKey}`]} compact editable={subEditable} />
+                      <td className="px-4 py-2.5"><PriorityToggle taskKey={subPriorityKey} legacyKey={subLegacyKey} priorities={priorities} onUpdate={onUpdatePriority || (() => {})} editable={subEditable} /></td>
+                      <td className="px-5 py-2.5 text-gray-400">{task.responsibility || "—"}</td>
+                      <td className="px-4 py-2.5">{canManageAssignments ? <AssignTeam displayName={brandNameForTask(task)} assignmentKey={assignmentKeyForTask(task)} legacyKey={task.clientName} assignments={assignments} members={teamMembers} onUpdate={onUpdateAssignment || (() => {})} compact /> : "—"}</td>
+                      <MonthCell month={task.month} compact />
                       <ActualSubmitCell actualSubmit={task.actualSubmit} compact />
-                      <DaysLateCell dueDate={task.dueDate} done={task.done} compact />
                       <RemarkCell
                         taskKey={subPriorityKey}
                         legacyKey={subLegacyKey}
@@ -627,9 +596,7 @@ export function CompletedClients({ allTasks, assignments = {}, onUpdateAssignmen
   return (
     <div className="mb-6">
       <div className="mb-3 flex items-center gap-2">
-        <svg className="h-4 w-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
+        <CheckCircleIcon aria-hidden="true" className="text-green-500" size={17} weight="duotone" />
         <h2 className="text-xs font-bold uppercase tracking-widest text-green-500">Completed</h2>
         <span className="text-[10px] text-green-400">{completedClients.length} clients · 100% done</span>
       </div>
@@ -642,9 +609,7 @@ export function CompletedClients({ allTasks, assignments = {}, onUpdateAssignmen
           >
             {/* Check icon */}
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500 shadow-sm">
-              <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
+              <CheckIcon aria-hidden="true" className="text-white" size={13} weight="bold" />
             </span>
 
             {/* Client name */}

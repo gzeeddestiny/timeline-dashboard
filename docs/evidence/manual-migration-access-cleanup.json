@@ -1,0 +1,6 @@
+{
+  "sourceBackupRoleRemoved": true,
+  "targetCliLoginRoleDeletedHttp": 200,
+  "temporaryManagementTokenRevokedHttp": 401,
+  "temporaryOrganizationMembershipRemoved": true
+}

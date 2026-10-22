@@ -1,4 +1,10 @@
+import { Dialog } from "@base-ui/react/dialog"
+import { XIcon } from "@phosphor-icons/react/dist/csr/X"
+import { CameraIcon } from "@phosphor-icons/react/dist/csr/Camera"
+import { ImageIcon } from "@phosphor-icons/react/dist/csr/Image"
+import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash"
 import { useEffect, useState, useRef } from "react"
+import { listPendingGoogleAccounts } from "../lib/fullSystem"
 import { ROLE_CONFIG, ROLES } from "../lib/teamConfig"
 import ImageCropper from "./ImageCropper"
 
@@ -10,37 +16,47 @@ import ImageCropper from "./ImageCropper"
  * @param {boolean} open — show/hide panel
  * @param {function} onClose — close panel
  */
-export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemoveAvatar, open, onClose }) {
+export default function TeamManager({ members, onUpdate, onAddMember, onUploadAvatar, onRemoveAvatar, open, onClose }) {
   const [newName, setNewName] = useState("")
+  const [newEmail, setNewEmail] = useState("")
+  const [pendingAccounts, setPendingAccounts] = useState([])
   const [newRole, setNewRole] = useState("creative")
-  const [cropData, setCropData] = useState(null) // { idx, src }
+  const [cropData, setCropData] = useState(null) // { memberName, src }
   const [error, setError] = useState("")
   const [savingAvatar, setSavingAvatar] = useState(false)
+  const [avatarMessage, setAvatarMessage] = useState("")
+  const [savingMember, setSavingMember] = useState(false)
   const fileInputRefs = useRef({})
-  const closeRef = useRef(null)
 
   useEffect(() => {
-    if (!open) return undefined
-    const previousFocus = document.activeElement
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    closeRef.current?.focus()
-    const keydown = (event) => { if (event.key === "Escape") onClose() }
-    document.addEventListener("keydown", keydown)
-    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", keydown); previousFocus?.focus?.() }
-  }, [onClose, open])
+    if (!open) return
+    let active = true
+    listPendingGoogleAccounts().then((accounts) => { if (active) setPendingAccounts(accounts) }).catch(() => {})
+    return () => { active = false }
+  }, [open])
 
   if (!open) return null
 
-  const addMember = () => {
+  const addMember = async (event) => {
+    event?.preventDefault()
     const name = newName.trim()
-    if (!name) return
+    const email = newEmail.trim().toLowerCase()
+    if (!name || !email) return
     if (members.some((m) => m.name.toLowerCase() === name.toLowerCase())) {
-      alert(`"${name}" มีอยู่แล้ว`)
+      setError(`"${name}" มีอยู่แล้ว`)
       return
     }
-    onUpdate([...members, { name, role: newRole, avatar: "" }])
-    setNewName("")
+    setSavingMember(true)
+    setError("")
+    try {
+      await onAddMember({ email, name, teamRole: newRole })
+      setNewName("")
+      setNewEmail("")
+    } catch (saveError) {
+      setError(saveError.message)
+    } finally {
+      setSavingMember(false)
+    }
   }
 
   const removeMember = (idx) => {
@@ -54,7 +70,8 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
     onUpdate(updated)
   }
 
-  const handleAvatarUpload = (idx, e) => {
+  const handleAvatarUpload = (memberName, e) => {
+    setAvatarMessage("")
     const file = e.target.files?.[0]
     if (!file) return
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 10_000_000) {
@@ -66,26 +83,36 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
     const reader = new FileReader()
     reader.onload = (ev) => {
       // Open cropper with the raw image
-      setCropData({ idx, src: ev.target.result })
+      setCropData({ memberName, src: ev.target.result })
     }
     reader.readAsDataURL(file)
     // Reset input so same file can be re-selected
     e.target.value = ""
   }
 
-  const handleCropDone = async (croppedBase64) => {
+  const handleCropDone = async (croppedBlob) => {
     if (!cropData) return
     setSavingAvatar(true)
     setError("")
-    const saved = await onUploadAvatar(cropData.idx, croppedBase64)
-    setSavingAvatar(false)
-    if (saved) setCropData(null)
-    else setError("บันทึกรูปไม่สำเร็จ กรุณาลองใหม่")
+    setAvatarMessage("")
+    try {
+      const saved = await onUploadAvatar(cropData.memberName, croppedBlob)
+      if (!saved) throw new Error("บันทึกรูปไม่สำเร็จ กรุณาลองใหม่")
+      setCropData(null)
+      setAvatarMessage(`บันทึกรูป Profile ของ ${cropData.memberName} เรียบร้อย และตรวจสอบข้อมูลแล้ว`)
+    } catch (saveError) {
+      setError(saveError.message)
+      throw saveError
+    } finally {
+      setSavingAvatar(false)
+    }
   }
 
-  const removeAvatar = async (idx) => {
+  const removeAvatar = async (memberName) => {
     setError("")
-    if (!await onRemoveAvatar(idx)) setError("ลบรูปไม่สำเร็จ กรุณาลองใหม่")
+    setAvatarMessage("")
+    if (!await onRemoveAvatar(memberName)) setError("ลบรูปไม่สำเร็จ กรุณาลองใหม่")
+    else setAvatarMessage(`ลบรูป Profile ของ ${memberName} เรียบร้อย`)
   }
 
   // Group by role
@@ -95,31 +122,26 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
     if (!grouped[m.role]) grouped[m.role] = []
     grouped[m.role].push({ ...m, _idx: i })
   })
+  const unsupportedMembers = members.map((member, index) => ({ ...member, _idx: index })).filter((member) => !ROLE_CONFIG[member.role])
 
   return (
-    <div className="ui-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/35" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="team-manager-title"
-        className="ui-popover ui-modal-enter relative w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="ui-overlay-enter fixed inset-0 z-[var(--z-overlay)] bg-black/35" />
+        <Dialog.Popup className="ui-popover ui-modal-enter fixed left-1/2 top-1/2 z-[var(--z-modal)] max-h-[85dvh] w-[min(32rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto">
         {/* Header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-purple-100 bg-white px-6 py-4 rounded-t-2xl">
           <div>
-            <h2 id="team-manager-title" className="text-base font-bold text-purple-900">Team Members</h2>
+            <Dialog.Title id="team-manager-title" className="text-base font-bold text-[var(--ui-text)]">Team Members</Dialog.Title>
             <p className="text-[11px] text-purple-300">จัดการสมาชิก เปลี่ยนรูป เพิ่มคน</p>
           </div>
-          <button ref={closeRef} type="button" onClick={onClose} aria-label="ปิดหน้าจัดการทีม" className="ui-button ui-button-secondary min-h-0 p-1.5 text-purple-400">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <Dialog.Close type="button" aria-label="ปิดหน้าจัดการทีม" className="ui-icon-button"><XIcon aria-hidden="true" size={19} weight="bold" /></Dialog.Close>
         </div>
 
         <div className="p-6 space-y-5">
           {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-600">{error}</div>}
+          {avatarMessage && <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">{avatarMessage}</div>}
+          {unsupportedMembers.length > 0 && <div role="alert" className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700"><p>สมาชิกต่อไปนี้มี role ที่ระบบไม่รองรับ จึงยัง Assign ไม่ได้ กรุณาเลือก role ใหม่</p>{unsupportedMembers.map((member) => <label key={member.name} className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate font-semibold">{member.name}</span><select defaultValue="" onChange={(event) => changeRole(member._idx, event.target.value)} className="ui-field px-2 py-1 text-xs"><option value="" disabled>เลือก role</option>{ROLES.map((role) => <option key={role} value={role}>{ROLE_CONFIG[role].label}</option>)}</select></label>)}</div>}
           {/* Members by role */}
           {ROLES.map((role) => {
             const rc = ROLE_CONFIG[role]
@@ -141,7 +163,7 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
                       <div key={m._idx} className="ui-task-row flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-2">
                         {/* Avatar */}
                         <div className="relative">
-                          <button type="button" onClick={() => fileInputRefs.current[m._idx]?.click()} aria-label={`เปลี่ยนรูป ${m.name}`} className="group relative block rounded-full">
+                          <button type="button" onClick={() => fileInputRefs.current[m.name]?.click()} aria-label={`เปลี่ยนรูป ${m.name}`} className="group relative block rounded-full">
                           {m.avatar ? (
                             <img
                               src={m.avatar}
@@ -157,18 +179,15 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
                           )}
                           {/* Upload overlay */}
                           <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                            <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
+                            <CameraIcon aria-hidden="true" className="text-white" size={14} weight="bold" />
                           </span>
                           </button>
                           <input
-                            ref={(el) => { fileInputRefs.current[m._idx] = el }}
+                            ref={(el) => { fileInputRefs.current[m.name] = el }}
                             type="file"
                             accept="image/jpeg,image/png,image/webp"
                             className="hidden"
-                            onChange={(e) => handleAvatarUpload(m._idx, e)}
+                            onChange={(e) => handleAvatarUpload(m.name, e)}
                           />
                         </div>
 
@@ -189,25 +208,23 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
                         {/* Remove avatar */}
                         {m.avatar && (
                           <button
-                            onClick={() => removeAvatar(m._idx)}
-                            className="rounded-md p-1 text-gray-300 transition hover:bg-red-50 hover:text-red-400"
+                            onClick={() => removeAvatar(m.name)}
+                            className="ui-action-icon text-gray-300 hover:bg-red-50 hover:text-red-400"
+                            aria-label={`ลบรูป ${m.name}`}
                             title="ลบรูป"
                           >
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
+                            <ImageIcon aria-hidden="true" size={15} />
                           </button>
                         )}
 
                         {/* Delete member */}
                         <button
                           onClick={() => removeMember(m._idx)}
-                          className="rounded-md p-1 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
+                          className="ui-action-icon text-gray-300 hover:bg-red-50 hover:text-red-500"
+                          aria-label={`ลบสมาชิก ${m.name}`}
                           title="ลบสมาชิก"
                         >
-                          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
+                          <TrashIcon aria-hidden="true" size={15} />
                         </button>
                       </div>
                     ))}
@@ -218,16 +235,28 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
           })}
 
           {/* Add new member */}
-          <div className="border-t border-purple-100 pt-4">
+          <form onSubmit={addMember} className="border-t border-purple-100 pt-4">
             <div className="text-[10px] font-bold uppercase tracking-wider text-purple-400 mb-2">เพิ่มสมาชิกใหม่</div>
-            <div className="flex items-center gap-2">
+            <div className="grid gap-2 sm:grid-cols-2">
               <input
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addMember()}
                 placeholder="ชื่อ..."
-                className="ui-field flex-1 text-sm text-gray-700"
+                aria-label="ชื่อสมาชิกใหม่"
+                required
+                className="ui-field text-sm text-gray-700"
               />
+              <input
+                type="email"
+                list="team-pending-google-account-emails"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                placeholder="อีเมล Google ที่ใช้ Sign in"
+                aria-label="อีเมล Google ของสมาชิกใหม่"
+                required
+                className="ui-field text-sm text-gray-700"
+              />
+              <datalist id="team-pending-google-account-emails">{pendingAccounts.map((account) => <option key={account.email} value={account.email}>{account.name}</option>)}</datalist>
               <select
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value)}
@@ -238,15 +267,18 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
                 ))}
               </select>
               <button
-                onClick={addMember}
-                className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-purple-700 active:scale-95"
+                type="submit"
+                disabled={savingMember}
+                className="ui-button ui-button-primary shrink-0 text-xs"
               >
-                เพิ่ม
+                {savingMember ? "กำลังเพิ่ม…" : "เพิ่มพร้อมสิทธิ์ใช้งาน"}
               </button>
             </div>
-          </div>
+            <p className="mt-2 text-[10px] text-amber-600">อีเมลต้องตรงกับบัญชี Google ที่พนักงานใช้ Sign in ทุกตัว</p>
+          </form>
         </div>
-      </div>
+        </Dialog.Popup>
+      </Dialog.Portal>
 
       {/* Image Cropper */}
       {cropData && (
@@ -257,6 +289,6 @@ export default function TeamManager({ members, onUpdate, onUploadAvatar, onRemov
           saving={savingAvatar}
         />
       )}
-    </div>
+    </Dialog.Root>
   )
 }

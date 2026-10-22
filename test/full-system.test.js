@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises"
 import { addTransitionMetrics, buildMetricRows, overdueTransitions, taskOwners } from "../api/_metrics.js"
 import { taskIdRepairTargets } from "../api/_syncCore.js"
 import { assignmentRpcArgs, validateAssignmentPatch } from "../api/assignment.js"
+import teamAvatarApi, { validateTeamAvatar } from "../api/team-avatar.js"
 import cronSync, { validCronSecret } from "../api/cron-sync.js"
 import { callAppsScript } from "../api/_appsScript.js"
 import { validateCompletion } from "../api/completion.js"
@@ -14,10 +15,13 @@ import { filterDashboardTasks } from "../src/lib/dashboardFilters.js"
 import { bangkokDate, daysFrom, parseSheetDate, validIsoDate } from "../src/lib/dates.js"
 import { fetchAllRows } from "../src/lib/supabasePages.js"
 import { fetchAllSheetsData } from "../src/lib/sheetsApi.js"
-import { cachePendingWrites, loadPendingWrites, mergeRemote, taskSheetUrl } from "../src/lib/sharedState.js"
+import { cachePendingWrites, loadPendingWrites, mergeRemote, mergeRemoteProjects, overlayPendingProjects, taskSheetUrl } from "../src/lib/sharedState.js"
 import { columnName, findTaskHeaderRow, inspectTaskHeaders, isSecondaryScheduleHeader, taskRange } from "../src/lib/sheetSchema.js"
-import { assignmentMemberNames, assignmentRoleMembers, findMemberByName, responsibilityMentions, taskOwnerNames } from "../src/lib/teamConfig.js"
+import { applyMemberAvatar, assignmentMemberNames, assignmentRoleMembers, findMemberByName, mergeRemoteTeamMembers, mergeSavedTeamMember, responsibilityMentions, taskOwnerNames } from "../src/lib/teamConfig.js"
+import { assignmentKeyForTask, projectForTask, resolveAssignment } from "../src/lib/assignmentResolver.js"
+import { avatarBlobFromCanvas, persistAvatarChange, validateAvatarBlob } from "../src/lib/teamAvatar.js"
 import { filterMyWorkTasks, myWorkMonths, normalizeMyWorkFilters, partitionMyWorkTasks, selectNextAction } from "../src/lib/workViews.js"
+import { MILESTONE_TYPES, calculateContractEnd, completedLateDays, contractDaysRemaining, contractRadarRank, contractState, detectMilestone, milestoneNeedsDate, projectDatesFromTab, projectDeliveryState, projectNameFromTab, riskForBrand, suggestProjectsForBrand, suggestSourceTabsForBrand, timelineRangeDates } from "../src/lib/brandTimeline.js"
 
 const tasks = [
   { taskKey: "s:1:task-a", taskId: "task-a", spreadsheetId: "s", sheetGid: 1, rowIndex: 1, clientName: "Nike JUL", month: "JUL", topic: "A", responsibility: "Tony", dueDate: "2026-07-01", done: false },
@@ -25,6 +29,122 @@ const tasks = [
   { taskKey: "s:1:task-c", taskId: "task-c", spreadsheetId: "s", sheetGid: 1, rowIndex: 3, clientName: "Nike JUL", month: "JUL", topic: "C", responsibility: "", dueDate: "2026-08-20", done: true },
   { taskKey: "s:1:task-d", taskId: "task-d", spreadsheetId: "s", sheetGid: 1, rowIndex: 4, clientName: "Nike JUL", month: "JUL", topic: "D", responsibility: "", dueDate: "", done: false },
 ]
+
+test("avatar crop produces a CSP-safe JPEG Blob without fetching a data URL", async () => {
+  let received = null
+  const blob = new Blob(["avatar"], { type: "image/jpeg" })
+  const canvas = {
+    toBlob(callback, type, quality) {
+      received = { type, quality }
+      callback(blob)
+    },
+  }
+
+  assert.equal(await avatarBlobFromCanvas(canvas), blob)
+  assert.deepEqual(received, { type: "image/jpeg", quality: 0.85 })
+  await assert.rejects(() => avatarBlobFromCanvas({ toBlob: (callback) => callback(null) }), /สร้างไฟล์รูปไม่สำเร็จ/)
+
+  const source = await readFile(new URL("../src/lib/fullSystem.js", import.meta.url), "utf8")
+  assert.doesNotMatch(source, /uploadTeamAvatar[\s\S]*?fetch\(dataUrl\)/)
+})
+
+test("avatar Blob validation accepts supported images and rejects invalid payloads", () => {
+  assert.equal(validateAvatarBlob(new Blob(["jpg"], { type: "image/jpeg" })).type, "image/jpeg")
+  assert.equal(validateAvatarBlob(new Blob(["png"], { type: "image/png" })).type, "image/png")
+  assert.equal(validateAvatarBlob(new Blob(["webp"], { type: "image/webp" })).type, "image/webp")
+  assert.throws(() => validateAvatarBlob(new Blob(["svg"], { type: "image/svg+xml" })), /JPEG, PNG หรือ WebP/)
+  assert.throws(() => validateAvatarBlob(new Blob([new Uint8Array(2_097_153)], { type: "image/jpeg" })), /ไม่เกิน 2 MB/)
+})
+
+test("avatar save uses a stable member name and deletes the previous file only after persistence", async () => {
+  const events = []
+  const members = [{ name: "BOOM", role: "pm", avatar: "https://old.example/avatar.jpg" }]
+  const result = await persistAvatarChange({
+    members,
+    memberName: "BOOM",
+    blob: new Blob(["new"], { type: "image/jpeg" }),
+    upload: async () => { events.push("upload:new"); return "https://new.example/avatar.jpg" },
+    persist: async (memberName, avatar) => { events.push(`persist:${memberName}:${avatar}`); return true },
+    remove: async (url) => { events.push(`remove:${url}`) },
+  })
+
+  assert.equal(result.saved, true)
+  assert.equal(result.members[0].avatar, "https://new.example/avatar.jpg")
+  assert.equal(members[0].avatar, "https://old.example/avatar.jpg")
+  assert.deepEqual(events, [
+    "upload:new",
+    "persist:BOOM:https://new.example/avatar.jpg",
+    "remove:https://old.example/avatar.jpg",
+  ])
+})
+
+test("avatar save rolls back the uploaded file when member persistence fails", async () => {
+  const events = []
+  const members = [{ name: "BOOM", role: "pm", avatar: "https://old.example/avatar.jpg" }]
+  const result = await persistAvatarChange({
+    members,
+    memberName: "boom",
+    blob: new Blob(["new"], { type: "image/jpeg" }),
+    upload: async () => { events.push("upload:new"); return "https://new.example/avatar.jpg" },
+    persist: async () => { events.push("persist:failed"); return false },
+    remove: async (url) => { events.push(`remove:${url}`) },
+  })
+
+  assert.equal(result.saved, false)
+  assert.equal(result.members, members)
+  assert.deepEqual(events, ["upload:new", "persist:failed", "remove:https://new.example/avatar.jpg"])
+})
+
+test("avatar upload failure never persists or removes an existing profile", async () => {
+  const events = []
+  const members = [{ name: "BOOM", role: "pm", avatar: "https://old.example/avatar.jpg" }]
+  await assert.rejects(() => persistAvatarChange({
+    members,
+    memberName: "BOOM",
+    blob: new Blob(["new"], { type: "image/jpeg" }),
+    upload: async () => { events.push("upload:failed"); throw new Error("Storage unavailable") },
+    persist: async () => { events.push("persist") },
+    remove: async () => { events.push("remove") },
+  }), /Storage unavailable/)
+  assert.deepEqual(events, ["upload:failed"])
+  assert.equal(members[0].avatar, "https://old.example/avatar.jpg")
+})
+
+test("a newly saved member is merged into the live team without losing pending edits", () => {
+  const live = [
+    { name: "BOOM", role: "pm", avatar: "https://example.com/boom.jpg" },
+    { name: "MAY", role: "ae", avatar: "" },
+  ]
+  assert.deepEqual(mergeSavedTeamMember(live, { name: "AUM", role: "creative" }), [
+    ...live,
+    { name: "AUM", role: "creative", avatar: "" },
+  ])
+  assert.deepEqual(mergeSavedTeamMember(live, { name: "boom", role: "creative" }), live)
+})
+
+test("remote members appear while local team edits are pending", () => {
+  const pending = [{ name: "BOOM", role: "creative", avatar: "local-avatar" }]
+  const remote = [
+    { name: "AUM", role: "creative", avatar: "" },
+    { name: "BOOM", role: "pm", avatar: "remote-avatar" },
+  ]
+  assert.deepEqual(mergeRemoteTeamMembers(pending, remote, true), [
+    { name: "BOOM", role: "creative", avatar: "local-avatar" },
+    { name: "AUM", role: "creative", avatar: "" },
+  ])
+  assert.equal(mergeRemoteTeamMembers(pending, remote, false), remote)
+})
+
+test("avatar completion patches the latest team state instead of replacing its snapshot", () => {
+  const latest = [
+    { name: "BOOM", role: "creative", avatar: "old" },
+    { name: "AUM", role: "creative", avatar: "" },
+  ]
+  assert.deepEqual(applyMemberAvatar(latest, "boom", "new"), [
+    { name: "BOOM", role: "creative", avatar: "new" },
+    { name: "AUM", role: "creative", avatar: "" },
+  ])
+})
 
 test("validates workflow patches", () => {
   assert.equal(validateWorkflow({ key: "s:1:task-a", status: "blocked" }), null)
@@ -42,6 +162,8 @@ test("workflow RPC patches only fields present in the request", () => {
     p_has_note: true,
     p_priority: null,
     p_has_priority: false,
+    p_next_action: null,
+    p_has_next_action: false,
     p_actor: "actor",
     p_expected_note_version: 3,
     p_force_note: false,
@@ -50,6 +172,10 @@ test("workflow RPC patches only fields present in the request", () => {
 
 test("assignment RPC updates one role without replacing the whole object", () => {
   assert.equal(validateAssignmentPatch({ key: "nike", role: "creative", members: ["Tony", "Aom"] }), null)
+  assert.equal(validateAssignmentPatch({ key: "nike", role: "graphic_editor", members: ["Mild"] }), null)
+  assert.equal(validateAssignmentPatch({ key: "nike", role: "cameraman", members: ["Film"] }), null)
+  assert.equal(validateAssignmentPatch({ key: "nike", role: "media_planner", members: ["Plan"] }), null)
+  assert.equal(validateAssignmentPatch({ key: "nike", role: "ads_optimizer", members: ["Optimize"] }), null)
   assert.equal(validateAssignmentPatch({ key: "nike", role: "unknown", members: ["Tony"] }), "Invalid assignment role")
   assert.equal(validateAssignmentPatch({ key: "nike", role: "pm", members: ["Tony", "tony"] }), "Duplicate assignment member")
   assert.deepEqual(assignmentRpcArgs({ key: " nike ", role: "pm", members: [] }, "actor"), {
@@ -59,6 +185,195 @@ test("assignment RPC updates one role without replacing the whole object", () =>
     p_clear: false,
     p_actor: "actor",
   })
+})
+
+test("production team roles are accepted by the database migration", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/20260813180000_add_production_team_roles.sql", import.meta.url), "utf8")
+  assert.match(sql, /'cameraman'/)
+  assert.match(sql, /'media_planner'/)
+  assert.match(sql, /'ads_optimizer'/)
+  assert.match(sql, /replace_team_members\(jsonb\)/)
+  assert.match(sql, /save_access_with_member\(text,text,text,text,boolean\)/)
+  assert.match(sql, /patch_assignment_role\(text,text,jsonb,boolean,uuid\)/)
+})
+
+test("avatar endpoint validates a single-member atomic update", async () => {
+  assert.equal(validateTeamAvatar({ memberName: "AUM", avatar: "https://example.com/aum.jpg" }), null)
+  assert.equal(validateTeamAvatar({ memberName: "AUM", avatar: "" }), null)
+  assert.equal(validateTeamAvatar({ memberName: "", avatar: "https://example.com/aum.jpg" }), "Invalid team member")
+  assert.equal(validateTeamAvatar({ memberName: "AUM", avatar: "data:image/png;base64,abc" }), "Invalid avatar URL")
+  const source = await readFile(new URL("../api/team-avatar.js", import.meta.url), "utf8")
+  assert.match(source, /context\.access\.role !== "admin"/)
+  assert.match(source, /\.update\(\{ avatar,/)
+  assert.doesNotMatch(source, /delete\(\)/)
+})
+
+test("avatar endpoint requires authentication", async () => {
+  const response = { statusCode: 0, body: null, setHeader() {}, status(code) { this.statusCode = code; return this }, json(body) { this.body = body; return this } }
+  await teamAvatarApi({ method: "PATCH", headers: {}, body: { memberName: "AUM", avatar: "" } }, response)
+  assert.equal(response.statusCode, 401)
+})
+
+test("brand timeline migration exposes safe workstream and contract RPCs", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/20260820120000_brand_contract_timeline.sql", import.meta.url), "utf8")
+  assert.match(sql, /create table if not exists public\.brand_workstreams/)
+  assert.match(sql, /create table if not exists public\.contract_rounds/)
+  assert.match(sql, /source tab is already assigned/i)
+  assert.match(sql, /Contract rounds cannot overlap/i)
+  assert.match(sql, /queue_contract_notifications/)
+  assert.match(sql, /notifications_dedupe_key_idx/)
+  assert.match(sql, /update public\.brand_workstreams/)
+  assert.match(sql, /p_status not in \('closed', 'cancelled', 'open'\)/)
+  assert.match(sql, /pg_advisory_xact_lock/)
+  assert.match(sql, /where id = target_id and workstream_id = p_workstream_id/)
+})
+
+test("Brand Project migration keeps legacy data and allows named overlapping contracts", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/20260830120000_brand_projects.sql", import.meta.url), "utf8")
+  assert.match(sql, /create table if not exists public\.brand_catalog/)
+  assert.match(sql, /set assignment = legacy\.value/)
+  assert.match(sql, /to_jsonb\(project\.owner_member\)/)
+  assert.match(sql, /add column if not exists name text/)
+  assert.match(sql, /create or replace function public\.save_brand_project\(/)
+  assert.match(sql, /create or replace function public\.save_brand_project_contract\(/)
+  assert.doesNotMatch(sql, /Contract rounds cannot overlap/i)
+  assert.match(sql, /jsonb_each\(d\.assignment\)/)
+  assert.match(sql, /contract_name/)
+})
+
+test("Brand Contract hierarchy migration preserves legacy rows and exposes protected RPCs", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/20260830204015_brand_contract_project_hierarchy.sql", import.meta.url), "utf8")
+  assert.match(sql, /add column if not exists brand_id uuid references public\.brand_catalog/)
+  assert.match(sql, /add column if not exists contract_id uuid references public\.contract_rounds/)
+  assert.match(sql, /create or replace function public\.upsert_brand_contract/)
+  assert.match(sql, /create or replace function public\.upsert_brand_project/)
+  assert.match(sql, /p_source_tab_key text/)
+  assert.match(sql, /in \(30, 14, 7\)/)
+  assert.match(sql, /access\.role = 'admin'/)
+  assert.match(sql, /revoke execute on function public\.upsert_brand_contract[\s\S]*from public, anon/)
+})
+
+test("brand timeline dates and milestones are deterministic", () => {
+  assert.equal(calculateContractEnd("2026-01-01", 3), "2026-03-31")
+  assert.equal(calculateContractEnd("2028-02-29", 12), "2029-02-27")
+  assert.equal(calculateContractEnd("2026-01-01", 9), "")
+  assert.equal(detectMilestone("Idea - Present Idea"), "present_idea")
+  assert.equal(detectMilestone("VDO 1: Draft 1 AW"), "draft_1")
+  assert.equal(detectMilestone("Draft 10"), null)
+  assert.equal(contractState({ startDate: "2026-08-01", endDate: "2026-08-31", status: "open" }, "2026-08-20"), "active")
+  assert.equal(contractState({ startDate: "2026-07-01", endDate: "2026-07-31", status: "open" }, "2026-08-20"), "expired")
+})
+
+test("brand timeline supports shared ranges, late details and missing milestone dates", () => {
+  assert.equal(MILESTONE_TYPES.contract_end.label, "Contract End")
+  const late = { taskKey: "s:1:late", topic: "Draft 1", dueDate: "2026-08-01", actualSubmit: "2026-08-04", done: true }
+  assert.equal(completedLateDays(late), 3)
+  assert.equal(milestoneNeedsDate({ ...late, dueDate: "" }), true)
+  const range = timelineRangeDates({ today: "2026-08-20", range: "6m", tasks: [], contracts: [] })
+  assert.equal(range.startDate, "2026-05-20")
+  assert.equal(range.endDate, "2026-11-20")
+  const suggestions = suggestSourceTabsForBrand({
+    brandKey: "acme",
+    tabs: [{ key: "1:1", title: "Acme Jan", count: 4 }, { key: "1:2", title: "Acme Production", count: 3 }, { key: "1:3", title: "Other", count: 2 }, { key: "1:4", title: "Empty tab", count: 0 }],
+    tabBrands: { "1:4": "Acme" },
+    tasksByTab: { "1:1": [{ clientName: "Acme Jan" }], "1:2": [{ clientName: "Other" }], "1:3": [{ clientName: "Other" }] },
+    brandNameForTask: (task) => task.clientName.split(" ")[0],
+  })
+  assert.deepEqual(suggestions.map((tab) => tab.key), ["1:1", "1:4", "1:2"])
+  assert.equal(suggestions[2].suggested, true)
+  assert.equal(suggestions[1].mapped, true)
+})
+
+test("Project suggestions keep month identity and never group different tabs", () => {
+  assert.equal(projectNameFromTab("(Pleng+Toey) Dr.choice Influ Mar 26", "Dr.choice"), "Influ Mar 26")
+  assert.deepEqual(projectDatesFromTab("Dr.choice Influ Mar 26"), { startDate: "2026-03-01", endDate: "2026-03-31" })
+  const suggestions = suggestProjectsForBrand({
+    brandName: "Dr.choice",
+    tabs: [
+      { key: "s:1", title: "Dr.choice Video Jan 2026", count: 4 },
+      { key: "s:2", title: "Dr.choice Video Feb 2026", count: 5 },
+      { key: "s:3", title: "Dr.choice Influ Mar 2026", count: 2 },
+    ],
+  })
+  assert.deepEqual(suggestions.map((item) => [item.name, item.sourceTabKey, item.taskCount]), [
+    ["Influ Mar 2026", "s:3", 2],
+    ["Video Feb 2026", "s:2", 5],
+    ["Video Jan 2026", "s:1", 4],
+  ])
+})
+
+test("Project delivery uses the manually entered Project end date", () => {
+  const base = { startDate: "2026-08-01", endDate: "2026-08-31" }
+  assert.deepEqual(projectDeliveryState({ ...base, tasks: [] }, "2026-09-03"), { state: "overdue", days: 3, total: 0, completed: 0, incomplete: 0, percent: 0, complete: false, completionDate: "" })
+  assert.equal(projectDeliveryState({ ...base, tasks: [{ done: false }] }, "2026-08-27").state, "due_soon")
+  assert.deepEqual(projectDeliveryState({ ...base, tasks: [{ done: true, actualSubmit: "2026-09-02" }] }, "2026-09-03").state, "completed_late")
+  assert.equal(projectDeliveryState({ tasks: [{ done: false }] }, "2026-09-03").state, "missing_dates")
+})
+
+test("contract radar thresholds and day zero are deterministic", () => {
+  const contract = { startDate: "2026-08-01", endDate: "2026-08-20", status: "open" }
+  assert.equal(contractDaysRemaining(contract, "2026-08-20"), 0)
+  assert.equal(contractRadarRank(contract, "2026-08-20"), 1)
+  assert.equal(contractRadarRank({ ...contract, endDate: "2026-10-04" }, "2026-08-20"), 4)
+  assert.equal(contractState({ ...contract, startDate: "2026-09-01", endDate: "2026-11-30" }, "2026-08-20"), "upcoming")
+})
+
+test("Brand UI keeps Contract overview visible and intake at the bottom", async () => {
+  const brand = await readFile(new URL("../src/components/BrandView.jsx", import.meta.url), "utf8")
+  const projects = await readFile(new URL("../src/components/BrandProjectsView.jsx", import.meta.url), "utf8")
+  const admin = await readFile(new URL("../src/components/AdminSettings.jsx", import.meta.url), "utf8")
+  const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8")
+  assert.match(brand, /export function ProjectForm/)
+  assert.match(brand, /Project หนึ่งรายการใช้ Google Sheet tab เพียงหนึ่งอัน/)
+  assert.match(brand, /สัญญาใหญ่ของ/)
+  assert.match(projects, /Contract Gantt/)
+  assert.match(projects, /Project intake/)
+  assert.match(projects, /หนึ่ง tab จะสร้างหนึ่ง Project/)
+  assert.match(projects, /onSetProjectActive/)
+  assert.doesNotMatch(`${brand}\n${projects}`, /workstream/i)
+  assert.doesNotMatch(admin, /brandTimeline|ProjectForm|ContractForm|Brand Projects & contracts/)
+  assert.match(app, /onManageBrands=\{\(\) => setViewMode\("brand"\)\}/)
+})
+
+test("brand risk keeps contracts ahead of overdue milestone work", () => {
+  const risk = riskForBrand({
+    today: "2026-08-20",
+    tasks: [{ taskKey: "s:1:task-a", topic: "Present Idea", dueDate: "2026-08-01", done: false }],
+    contracts: [{ id: "c", startDate: "2026-01-01", endDate: "2026-08-30", status: "open" }],
+  })
+  assert.equal(risk.rank, 2)
+  assert.equal(risk.overdueKeyTasks.length, 1)
+})
+
+test("workflow presentation calls blocked data Hold without changing its value", async () => {
+  const config = await readFile(new URL("../src/lib/workflowConfig.jsx", import.meta.url), "utf8")
+  const select = await readFile(new URL("../src/components/WorkflowSelect.jsx", import.meta.url), "utf8")
+  const table = await readFile(new URL("../src/components/TimelineTable.jsx", import.meta.url), "utf8")
+  assert.match(config, /value:\s*"blocked",\s*label:\s*"Hold"/)
+  assert.match(config, /value:\s*"in_progress"[\s\S]*tone:\s*"progress"/)
+  assert.match(config, /value:\s*"done"[\s\S]*tone:\s*"done"/)
+  assert.doesNotMatch(config, /value:\s*"hold"/)
+  assert.match(select, /data-workflow-tone=/)
+  assert.match(table, /workflowLabel\(workflowValue\)/)
+})
+
+test("browser data refresh is manual while auth and notifications keep lightweight refresh", async () => {
+  const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8")
+  const auth = await readFile(new URL("../src/components/AuthGate.jsx", import.meta.url), "utf8")
+  const notifications = await readFile(new URL("../src/components/NotificationCenter.jsx", import.meta.url), "utf8")
+  assert.doesNotMatch(app, /timeline-shared-state/)
+  assert.doesNotMatch(app, /setInterval\(refreshShared/)
+  assert.doesNotMatch(app, /addEventListener\("focus", refreshShared/)
+  assert.doesNotMatch(app, /cacheExpired[\s\S]*syncData\(\)/)
+  assert.match(app, /const refreshScreen = useCallback/)
+  assert.match(auth, /setInterval\(refreshAccess, READ_INTERVAL\)/)
+  assert.match(notifications, /setInterval\(refresh, 120_000\)/)
+})
+
+test("scheduled Google sync leaves a fresh snapshot before notification slots", async () => {
+  const sql = await readFile(new URL("../supabase/cron.sql", import.meta.url), "utf8")
+  assert.match(sql, /'25,55 \* \* \* \*'/)
+  assert.match(sql, /'timeline-dashboard-notifications'[\s\S]*'\*\/15 \* \* \* \*'/)
 })
 
 test("validates completion targets before writing Google Sheets", () => {
@@ -83,6 +398,7 @@ test("uses assignment and responsibility ownership", () => {
   const members = [{ name: "Tony" }, { name: "May" }]
   const owners = taskOwners(tasks[0], members, { "s:1": "Nike" }, { nike: { lead: "May" } })
   assert.deepEqual(owners, ["Tony"])
+  assert.deepEqual(taskOwners(tasks[1], members, { "s:1": "Nike" }, { "s:1": { lead: "May" }, nike: { lead: "Tony" } }), ["May"])
   assert.deepEqual(taskOwnerNames(tasks[1], members, { lead: "May" }), ["May"])
 })
 
@@ -104,6 +420,16 @@ test("matches an existing timeline member without creating a case variant", () =
   const members = [{ name: "Maya", role: "creative", avatar: "photo" }]
   assert.equal(findMemberByName(members, "  maya "), members[0])
   assert.equal(findMemberByName(members, "May"), undefined)
+})
+
+test("modal layer stays above its backdrop and below alerts", async () => {
+  const css = await readFile(new URL("../src/index.css", import.meta.url), "utf8")
+  const layer = (name) => Number(css.match(new RegExp(`--z-${name}:\\s*(\\d+)`))?.[1])
+  assert.ok(Number.isFinite(layer("overlay")), "overlay z-index token must exist")
+  assert.ok(Number.isFinite(layer("modal")), "modal z-index token must exist")
+  assert.ok(Number.isFinite(layer("alert")), "alert z-index token must exist")
+  assert.ok(layer("overlay") < layer("modal"), "modal must render above its backdrop")
+  assert.ok(layer("modal") < layer("alert"), "alerts must render above regular modals")
 })
 
 test("uses Unicode boundaries for blocked notification recipients", () => {
@@ -144,6 +470,13 @@ test("requires authentication for the user sync API", async () => {
 test("requires authentication for task tab provisioning", async () => {
   const response = { statusCode: 0, body: null, setHeader() {}, status(code) { this.statusCode = code; return this }, json(body) { this.body = body; return this } }
   await taskTabsApi({ method: "POST", headers: {}, body: { action: "inspect", spreadsheetId: "sheet" } }, response)
+  assert.equal(response.statusCode, 401)
+})
+
+test("access account discovery requires authentication", async () => {
+  const accessAccountsApi = (await import("../api/access-accounts.js")).default
+  const response = { statusCode: 0, body: null, setHeader() {}, status(code) { this.statusCode = code; return this }, json(body) { this.body = body; return this } }
+  await accessAccountsApi({ method: "GET", headers: {} }, response)
   assert.equal(response.statusCode, 401)
 })
 
@@ -195,7 +528,7 @@ test("quotes task ranges and skips visible non-task tabs", async () => {
       { properties: { title: "Summary", sheetId: 12, hidden: false, gridProperties: { columnCount: 26 } } },
     ] }) }
     return { ok: true, json: async () => ({ valueRanges: [
-      { range: "'Client''s Plan'!A1:F3", values: [["Title"], ["", "Description", "Responsibility", "Due Date"], [false, "Launch", "May", "10/08/2026", ""]] },
+      { range: "'Client''s Plan'!A1:F3", values: [["Title"], ["", "Description", "Responsibility", "Due Date", "Actual Submit", "GD Timeline", "Task ID"], [false, "Launch", "May", "10/08/2026", "", "", "task_1"]] },
       { range: "Summary!A1:F2", values: [["Metric", "Value"], ["Open", 1]] },
       { range: "'Client''s Plan'!Z1:Z3", values: [[""], ["Task ID"], ["task_1"]] },
       { range: "Summary!Z1:Z2", values: [] },
@@ -397,7 +730,7 @@ test("RLS migration grants task edits to active users and settings only to admin
   assert.match(launchSql, /revoke execute on function private\.audit_shared_change\(\) from public, anon, authenticated/)
   assert.match(launchSql, /notifications_update[\s\S]*private\.is_active_user\(\)/)
   const cronSql = await readFile(new URL("../supabase/cron.sql", import.meta.url), "utf8")
-  assert.match(cronSql, /'0 \*\/3 \* \* \*'/)
+  assert.match(cronSql, /'25,55 \* \* \* \*'/)
   assert.match(cronSql, /vault\.decrypted_secrets/)
   assert.doesNotMatch(cronSql, /X-Cron-Secret',\s*'[^']{32}/)
   const prioritySql = await readFile(new URL("../supabase/migrations/20260810090000_business_priorities.sql", import.meta.url), "utf8")
@@ -464,6 +797,31 @@ test("assignment migration stores multiple members per role", async () => {
   assert.match(assignment, /newlyAssigned/)
 })
 
+test("Explorer assignment resolver keeps legacy tabs assignable and gives Projects precedence", () => {
+  const task = { spreadsheetId: "sheet", sheetGid: 7, clientName: "Acme JUL" }
+  const project = { id: "project-1", sourceTabKey: "sheet:7", assignment: { creative: ["AOM"] }, active: true }
+  assert.equal(projectForTask(task, [project])?.id, "project-1")
+  assert.equal(assignmentKeyForTask(task, [project], "Acme"), "project-1")
+  assert.deepEqual(resolveAssignment(task, {
+    projects: [project],
+    projectAssignments: { "project-1": { creative: ["AOM"] } },
+    assignments: { acme: { creative: ["TONY"] } },
+    brandName: "Acme",
+  }), { creative: ["AOM"] })
+
+  const legacyTask = { spreadsheetId: "sheet", sheetGid: 8, clientName: "Acme JUL" }
+  assert.equal(assignmentKeyForTask(legacyTask, [], "Acme"), "acme")
+  assert.deepEqual(resolveAssignment(legacyTask, { assignments: { acme: { pm: ["BOOM"] } }, brandName: "Acme" }), { pm: ["BOOM"] })
+})
+
+test("pending Project assignments survive a stale remote refresh", () => {
+  const local = [{ id: "project-1", name: "June", assignment: { pm: ["OLD"] } }]
+  const remote = [{ id: "project-1", name: "June", assignment: {} }]
+  const pending = new Map([["projectAssignments:project-1", { resource: "projectAssignments", key: "project-1", value: { pm: ["NEW"] } }]])
+  assert.deepEqual(mergeRemoteProjects(local, remote, pending)[0].assignment, { pm: ["NEW"] })
+  assert.deepEqual(overlayPendingProjects(local, [...pending.values()])[0].assignment, { pm: ["NEW"] })
+})
+
 test("active users can add sheets while admin keeps update control", async () => {
   const sql = await readFile(new URL("../supabase/migrations/20260811124050_active_users_add_sheets.sql", import.meta.url), "utf8")
   assert.match(sql, /create policy sheets_active_insert/)
@@ -497,13 +855,14 @@ test("ready migration applies snapshots and completion atomically", async () => 
   assert.match(completion, /rpc\("finalize_completion"/)
 })
 
-test("legacy migration normalizes priorities and cron has no unsent digest", async () => {
+test("legacy migration normalizes priorities and cron uses the notification worker", async () => {
   const migration = await readFile(new URL("../scripts/migrate-gist-to-supabase.mjs", import.meta.url), "utf8")
   assert.match(migration, /value === "fire" \? "urgent"/)
   assert.match(migration, /value === "think" \? "high"/)
   assert.match(migration, /order\("task_key"\)/)
   const cron = await readFile(new URL("../supabase/cron.sql", import.meta.url), "utf8")
   assert.doesNotMatch(cron, /cron\.schedule\(\s*'timeline-dashboard-daily-digest'/)
+  assert.match(cron, /cron\.schedule\(\s*'timeline-dashboard-notifications'/)
   const assignment = await readFile(new URL("../api/assignment.js", import.meta.url), "utf8")
   assert.doesNotMatch(assignment, /Manager access required/)
 })
