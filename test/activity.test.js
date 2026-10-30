@@ -416,3 +416,15 @@ test('employees only see their own update summary', async () => {
   const all = await employeeActivity({ admin, access: { email: 'boss@example.com', role: 'manager' } })
   assert.equal(all.items.length, 2)
 })
+
+test('activity migration applies before the V2 tables exist, as in production', async () => {
+  const db = new PGlite()
+  try {
+    await db.exec(bootstrap.split('\n').filter((line) => !/public\.v2_(plans|comments)/.test(line)).join('\n'))
+    for (const name of ['20260907100000_action_history', '20260908100000_action_history_evidence', '20261030100000_sync_detected_activity']) {
+      await db.exec(await readFile(new URL(`../supabase/migrations/${name}.sql`, import.meta.url), 'utf8'))
+    }
+    const found = (await db.query("select to_regclass('public.sheet_revisions') is not null as revisions, to_regprocedure('private.track_v2_plan_activity()') is not null as v2_function")).rows[0]
+    assert.deepEqual(found, { revisions: true, v2_function: true })
+  } finally { await db.close() }
+})

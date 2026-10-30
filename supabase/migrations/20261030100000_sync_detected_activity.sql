@@ -248,10 +248,6 @@ begin
    private.action_diff(b, jsonb_build_object('start_date',new.start_date,'end_date',new.end_date)), actor_mail);
  return new;
 end $$;
-drop trigger if exists track_v2_plan_activity on public.v2_plans;
-create trigger track_v2_plan_activity after insert or update on public.v2_plans
-for each row execute function private.track_v2_plan_activity();
-
 create or replace function private.track_v2_comment_activity() returns trigger
 language plpgsql security definer set search_path = '' as $$
 begin
@@ -261,9 +257,19 @@ begin
    new.author_email);
  return new;
 end $$;
-drop trigger if exists track_v2_comment_activity on public.v2_comments;
-create trigger track_v2_comment_activity after insert or update on public.v2_comments
-for each row execute function private.track_v2_comment_activity();
+-- Production may not have the V2 tables yet; timeline_v2 attaches these triggers when it runs later.
+do $$ begin
+ if to_regclass('public.v2_plans') is not null then
+   drop trigger if exists track_v2_plan_activity on public.v2_plans;
+   create trigger track_v2_plan_activity after insert or update on public.v2_plans
+   for each row execute function private.track_v2_plan_activity();
+ end if;
+ if to_regclass('public.v2_comments') is not null then
+   drop trigger if exists track_v2_comment_activity on public.v2_comments;
+   create trigger track_v2_comment_activity after insert or update on public.v2_comments
+   for each row execute function private.track_v2_comment_activity();
+ end if;
+end $$;
 
 -- Names the editor of Sheet events that arrived without one, using Drive version history.
 -- A revision's time closes a merged editing window, so the edit precedes it. Only a window

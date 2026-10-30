@@ -151,4 +151,18 @@ end;
 $$;
 revoke all on function public.v2_mutate(text,jsonb) from public, anon;
 grant execute on function public.v2_mutate(text,jsonb) to authenticated;
+
+-- When sync_detected_activity ran before this migration, attach its activity triggers now.
+do $$ begin
+ if to_regprocedure('private.track_v2_plan_activity()') is not null then
+   drop trigger if exists track_v2_plan_activity on public.v2_plans;
+   create trigger track_v2_plan_activity after insert or update on public.v2_plans
+   for each row execute function private.track_v2_plan_activity();
+ end if;
+ if to_regprocedure('private.track_v2_comment_activity()') is not null then
+   drop trigger if exists track_v2_comment_activity on public.v2_comments;
+   create trigger track_v2_comment_activity after insert or update on public.v2_comments
+   for each row execute function private.track_v2_comment_activity();
+ end if;
+end $$;
 commit;
