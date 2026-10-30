@@ -7,19 +7,24 @@ import TaskIdentity from './TaskIdentity'
 
 function actorLine(event) {
   if (event.actor_attribution === 'confirmed') return <>ผู้แก้: {[event.actor_name, event.actor_email].filter(Boolean).join(' · ')}</>
+  if (event.actor_attribution === 'revision_inferred') return <>ผู้แก้: {[event.inferred_actor_name, event.inferred_actor_email].filter(Boolean).join(' · ')} <strong className="text-amber-700">(อนุมานจาก Version history — ช่วงนั้นมีคนแก้ไฟล์คนเดียว)</strong></>
+  if (event.actor_attribution === 'revision_ambiguous') return <>ผู้แก้: ไม่ยืนยัน <strong className="text-amber-700">(ช่วงนั้นมี {event.inferred_candidates.length} คนแก้ไฟล์: {event.inferred_candidates.join(', ')})</strong></>
   const people = [...(event.display_ae_names || event.ae_names || []), ...(event.display_ae_emails || [])]
   if (event.actor_attribution === 'current_ae_unverified') return <>ผู้แก้: ไม่ทราบ · {people.join(', ') || 'ไม่ทราบ AE'} <strong className="text-amber-700">(AE ปัจจุบัน — ไม่ยืนยันผู้แก้ย้อนหลัง)</strong></>
   return <>ผู้แก้: ไม่ทราบ · {people.join(', ') || 'ไม่ทราบ AE'} <strong className="text-amber-700">(อ้างอิงจาก AE ผู้รับผิดชอบ)</strong></>
 }
 
-export default function ActivityHistory({ taskKey = '', options = {} }) {
+export default function ActivityHistory({ taskKey = '', options = {}, actor = '' }) {
   const [filters, setFilters] = useState({ ae: '', projectId: '', taskKey: '', from: '', to: '', personal: '' })
   const [offset, setOffset] = useState(0)
-  const loader = useCallback(() => fetchActionHistory({ ...filters, taskKey: taskKey || filters.taskKey, offset }), [filters, taskKey, offset])
+  const [shownActor, setShownActor] = useState(actor)
+  // A newly selected editor starts again from the first page.
+  if (shownActor !== actor) { setShownActor(actor); setOffset(0) }
+  const loader = useCallback(() => fetchActionHistory({ ...filters, taskKey: taskKey || filters.taskKey, actor, offset }), [filters, taskKey, actor, offset])
   const { data, loading, error, reload, fetchedAt } = useLiveResource(loader, { items: [], nextOffset: null })
   const setFilter = (name, value) => { setFilters((old) => ({ ...old, ...(name === 'personal' && value === '1' ? { projectId: '', taskKey: '' } : {}), [name]: value })); setOffset(0) }
   return <section className="mt-5 rounded-xl border border-gray-200 bg-white p-4" aria-label="ประวัติ Action">
-    <div className="flex items-center justify-between gap-3"><h2 className="font-bold text-purple-900">ประวัติ Action {taskKey ? 'ของงาน' : 'ราย AE'}</h2><button type="button" className="ui-button ui-button-secondary ui-button-sm" onClick={reload}>Refresh</button></div>
+    <div className="flex items-center justify-between gap-3"><h2 className="font-bold text-purple-900">ประวัติ Action {taskKey ? 'ของงาน' : actor ? `ของ ${actor}` : 'ราย AE'}</h2><button type="button" className="ui-button ui-button-secondary ui-button-sm" onClick={reload}>Refresh</button></div>
     {!taskKey && <div className="mt-3 grid gap-2 sm:grid-cols-3">
       <select aria-label="AE ในประวัติ" className="ui-field text-xs" value={filters.ae} onChange={(e) => setFilter('ae', e.target.value)}><option value="">AE ทั้งหมด</option>{(options.aes || []).map((ae) => <option key={ae}>{ae}</option>)}</select>
       <select disabled={filters.personal === '1'} aria-label="โปรเจกต์ในประวัติ" className="ui-field text-xs" value={filters.projectId} onChange={(e) => setFilter('projectId', e.target.value)}><option value="">โปรเจกต์ทั้งหมด</option>{(options.projects || []).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
@@ -33,8 +38,9 @@ export default function ActivityHistory({ taskKey = '', options = {} }) {
     {loading ? <p className="mt-3 text-xs text-gray-400">กำลังโหลดประวัติ…</p> : !data.items.length ? !error && <p className="mt-3 text-xs text-gray-500">ยังไม่มี action ที่บันทึกไว้ในช่วงนี้</p> : <ol className="mt-3 divide-y divide-gray-100">{data.items.map((event) => <li key={event.id} className="py-3 text-xs">
       <TaskIdentity brand={event.brand_name || event.project_name || event.member_name} task={event.task_name || (event.kind === 'avatar_changed' ? 'เปลี่ยนรูปโปรไฟล์' : 'Action')} detail={event.task_keys.length > 1 ? `${event.task_keys.length} งาน` : ''} />
       <div className="mt-1 text-gray-500">{formatThaiDateTime(event.occurred_at)} · {event.source === 'google_sheet' ? 'Google Sheet' : event.source === 'dashboard' ? 'Dashboard' : 'ระบบ'} · {actorLine(event)}</div>
+      {(event.sheet_name || event.cell_range) && <div className="mt-1 text-gray-500">ตำแหน่ง: แท็บ {event.sheet_name || '-'}{event.cell_range ? ` · เซลล์ ${event.cell_range}` : ''}</div>}
       <div className="mt-1 text-gray-500">AE ณ เวลานั้น: {(event.ae_names || []).join(', ') || (event.display_ae_names || []).join(', ') || 'ไม่ทราบ / ยังไม่กำหนด'}</div>
-      <div className="mt-1 text-[10px] text-gray-400">หลักฐาน: {event.evidence_source || event.source} · ความละเอียดเวลา: {event.time_precision === 'minute' ? 'ระดับนาที' : event.time_precision === 'version' ? 'ระดับเวอร์ชัน' : 'เวลาที่บันทึก'}</div>
+      <div className="mt-1 text-[10px] text-gray-400">หลักฐาน: {event.evidence_source || event.source} · ความละเอียดเวลา: {event.time_precision === 'minute' ? 'ระดับนาที' : event.time_precision === 'version' ? 'ระดับเวอร์ชัน' : event.time_precision === 'sync' ? '≈ เวลาจาก Sync' : 'เวลาที่บันทึก'}</div>
       <ul className="mt-2 space-y-1">{Object.entries(event.changes).map(([field, change]) => <li key={field} className="break-words"><strong>{actionLabel(field)}</strong>: {field === 'avatar' ? `${change.before ? 'มีรูป' : 'ไม่มีรูป'} → ${change.after ? 'เปลี่ยนรูปแล้ว' : 'ลบรูปแล้ว'}` : `${actionValue(change.before)} → ${actionValue(change.after)}`}</li>)}</ul>
       {event.history_gap && <p className="mt-1 text-amber-700">{event.history_gap}</p>}
       <details className="mt-1 text-gray-400"><summary>เวลารับข้อมูล</summary>{formatThaiDateTime(event.received_at)}</details>

@@ -18,6 +18,7 @@ function doPost(event) {
     if (body.action === "set_completion") return jsonResponse(setCompletion(body));
     if (body.action === "email_health") return jsonResponse(emailHealth());
     if (body.action === "send_email_batch") return jsonResponse(sendEmailBatch(body));
+    if (body.action === "list_revisions") return jsonResponse(listRevisions(body.spreadsheetIds, body.since));
     return jsonResponse({ success: false, error: "Unknown action" });
   } catch (error) {
     return jsonResponse({ success: false, error: error.message || String(error) });
@@ -287,13 +288,34 @@ function activityBaselines() {
   rows.forEach(function (row,index) { map[row[0]] = { row: index+2, value: JSON.parse(row[1]) }; });
   return { sheet: sheet, map: map };
 }
+// Edit handlers look up one baseline instead of reading the whole ledger while holding the lock.
+function activityBaselineStore() {
+  return { sheet: activitySheet('Baselines', ['Task key','Snapshot']), map: {} };
+}
+function loadActivityBaseline(baselines, key) {
+  if (baselines.map[key]) return baselines.map[key].value;
+  if (baselines.sheet.getLastRow() < 2) return undefined;
+  const cell = baselines.sheet.getRange(2,1,baselines.sheet.getLastRow()-1,1).createTextFinder(key).matchEntireCell(true).findNext();
+  if (!cell) return undefined;
+  baselines.map[key] = { row: cell.getRow(), value: JSON.parse(baselines.sheet.getRange(cell.getRow(),2).getValue()) };
+  return baselines.map[key].value;
+}
 function saveActivityBaseline(baselines, key, value) {
   const text = JSON.stringify(value);
   if (baselines.map[key]) baselines.sheet.getRange(baselines.map[key].row,2).setValue(text);
   else { baselines.sheet.appendRow([key,text]); baselines.map[key] = { row: baselines.sheet.getLastRow() }; }
   baselines.map[key].value = value;
 }
-function captureProjectLinkActivity(e, sheet, spreadsheetId, header, occurredAt) {
+function activityActor(e) {
+  // Installable triggers often hide e.user for consumer or cross-domain editors; revisions fill the gap later.
+  try { const email = e.user && e.user.getEmail(); if (email) return email; } catch (_) {}
+  try { return Session.getActiveUser().getEmail() || null; } catch (_) { return null; }
+}
+function cellActivityValue(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  return String(value).trim().slice(0, 200) || null;
+}
+function captureProjectLinkActivity(e, sheet, spreadsheetId, header, occurredAt, actor, where) {
   if (e.range.getRow() >= header || e.range.getLastRow() >= header) return false;
   const single = e.range.getNumRows()===1 && e.range.getNumColumns()===1;
   let linkRow = false;
@@ -310,7 +332,7 @@ function captureProjectLinkActivity(e, sheet, spreadsheetId, header, occurredAt)
         const field='project_link:'+label.replace(/\s*:\s*$/,'').toLowerCase();
         const changes={}; changes[field]={before:before,after:after};
         queueActivity({ id:Utilities.getUuid(),spreadsheetId:spreadsheetId,sheetGid:sheet.getSheetId(),scope:'tab',
-          occurredAt:occurredAt,source:'google_sheet',actorEmail:e.user ? e.user.getEmail() || null : null,changes:changes });
+          occurredAt:occurredAt,source:'google_sheet',actorEmail:actor,changes:changes,sheetName:where.sheetName,range:where.range });
       }
     }
   }
@@ -408,31 +430,53 @@ function captureSheetActivity(e) {
   const occurredAt = new Date().toISOString();
   const sheet = e.range.getSheet(), id = sheet.getParent().getId();
   const sources = activitySources();
-  if (!(sources[id] || []).includes(sheet.getSheetId())) return;
+  if (!sources[id]) return;
   const lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {
-    const header = validateTaskSheet(sheet);
-    if (!captureProjectLinkActivity(e,sheet,id,header,occurredAt)) {
+    let header;
+    if (!sources[id].includes(sheet.getSheetId())) {
+      // Tabs created after installation are tracked as soon as they have a task header.
+      try { header = validateTaskSheet(sheet); } catch (_) { return; }
+      sources[id].push(sheet.getSheetId());
+      PropertiesService.getScriptProperties().setProperty('ACTIVITY_SOURCES', JSON.stringify(sources));
+    } else header = validateTaskSheet(sheet);
+    const actor = activityActor(e);
+    const where = { sheetName: sheet.getName(), range: e.range.getA1Notation() };
+    if (!captureProjectLinkActivity(e,sheet,id,header,occurredAt,actor,where) && e.range.getLastRow() > header) {
       const idCol = taskIdColumn(sheet,header,false);
-      const columns = activityColumns(sheet,header), baselines = activityBaselines();
-      if (!Object.keys(columns).some(function(col) { return Number(col)>=e.range.getColumn() && Number(col)<=e.range.getLastColumn(); })) return;
+      const columns = activityColumns(sheet,header), headers = activityHeaderValues(sheet,header), baselines = activityBaselineStore();
+      const timezone = sheet.getParent().getSpreadsheetTimeZone();
       const single = e.range.getNumRows()===1 && e.range.getNumColumns()===1;
+      const allIds = sheet.getRange(header+1,idCol,Math.max(1,sheet.getLastRow()-header),1).getDisplayValues().map(function(r) { return r[0]; });
+      const skipped = [];
       for (let row = Math.max(header+1,e.range.getRow()); row <= e.range.getLastRow(); row++) {
-      const taskId = sheet.getRange(row,idCol).getDisplayValue();
-      if (!validTaskId(taskId)) throw new Error('Edited row has no valid Task ID');
-      const ids = sheet.getRange(header+1,idCol,sheet.getLastRow()-header,1).getDisplayValues().filter(function(r) { return r[0]===taskId; });
-      if (ids.length!==1) throw new Error('Duplicate Task ID');
+      const taskId = allIds[row-header-1];
+      // One unidentified row must not discard the other rows of the same paste.
+      if (!validTaskId(taskId) || allIds.filter(function(value) { return value===taskId; }).length!==1) {
+        if (row <= sheet.getLastRow() && sheet.getRange(row,1,1,sheet.getLastColumn()).getDisplayValues()[0].some(function(value) { return value !== ''; })) skipped.push(row);
+        continue;
+      }
       const key = id+':'+sheet.getSheetId()+':'+taskId;
-      const previous = baselines.map[key] && baselines.map[key].value;
+      const previous = loadActivityBaseline(baselines,key);
       const current = activitySnapshot(sheet,row,columns);
       const next = Object.assign({},previous || current), changes = {};
       let gap = previous ? null : 'ไม่มี snapshot ก่อนแก้ไข';
       for (let col=e.range.getColumn(); col<=e.range.getLastColumn(); col++) {
-        const field=columns[col]; if (!field) continue;
+        if (col === idCol) continue;
+        const field=columns[col];
+        if (!field) {
+          // Every other cell in a task row is an update too; it is history only, not task state.
+          const cellField = 'cell:' + (normalizeHeader(headers[col-1]) || 'column ' + col);
+          const cellBefore = single ? cellActivityValue(e.oldValue) : null;
+          const cellAfter = single && e.value !== undefined ? cellActivityValue(e.value) : cellActivityValue(sheet.getRange(row,col).getDisplayValue());
+          if (!single) gap = gap || 'วางหลายเซลล์: เปรียบเทียบจาก snapshot ไม่สามารถยืนยันค่าระหว่างเหตุการณ์ที่ซ้อนกัน';
+          if (JSON.stringify(cellBefore)!==JSON.stringify(cellAfter)) changes[cellField]={ before:cellBefore, after:cellAfter };
+          continue;
+        }
         let before=previous ? previous[field] : null, after=current[field];
         if (single) {
-          before=activityValue(e.oldValue,field,sheet.getParent().getSpreadsheetTimeZone());
-          after=activityValue(e.value,field,sheet.getParent().getSpreadsheetTimeZone());
+          before=activityValue(e.oldValue,field,timezone);
+          after=activityValue(e.value,field,timezone);
           if (previous && JSON.stringify(previous[field] ?? null)!==JSON.stringify(before)) gap='ค่าก่อนแก้ไม่ตรงกับ snapshot อาจมีเหตุการณ์ที่ขาดหายหรือสลับลำดับ';
         } else gap = gap || 'วางหลายเซลล์: เปรียบเทียบจาก snapshot ไม่สามารถยืนยันค่าระหว่างเหตุการณ์ที่ซ้อนกัน';
         next[field]=after;
@@ -445,9 +489,12 @@ function captureSheetActivity(e) {
         }
       }
       if (Object.keys(changes).length || gap) queueActivity({ id:Utilities.getUuid(),spreadsheetId:id,sheetGid:sheet.getSheetId(),taskId:taskId,taskKey:key,
-        occurredAt:occurredAt,source:'google_sheet',actorEmail:e.user ? e.user.getEmail() || null : null,changes:changes,historyGap:gap });
-        saveActivityBaseline(baselines,key,next);
+        occurredAt:occurredAt,source:'google_sheet',actorEmail:actor,changes:changes,historyGap:gap,sheetName:where.sheetName,range:where.range });
+        if (JSON.stringify(next)!==JSON.stringify(previous)) saveActivityBaseline(baselines,key,next);
       }
+      if (skipped.length) queueActivity({ id:Utilities.getUuid(),spreadsheetId:id,sheetGid:sheet.getSheetId(),scope:'tab',occurredAt:occurredAt,
+        source:'google_sheet',actorEmail:actor,changes:{},sheetName:where.sheetName,range:where.range,
+        historyGap:'แก้แถว '+skipped.join(', ')+' ที่ยังไม่มี Task ID หรือ Task ID ซ้ำ ระบบจะผูกกับงานหลัง Sync' });
     }
     PropertiesService.getScriptProperties().deleteProperty('ACTIVITY_ERROR_'+id);
   } catch(error) {
@@ -487,4 +534,31 @@ function flushActivityQueue() {
       else { const error=(result.errors || []).find(function(item) { return item.id===entry.values[0]; }); queue.getRange(entry.row,4).setValue(error ? error.error : 'Not acknowledged'); }
     });
   } finally { lock.releaseLock(); }
+}
+
+// Drive version history names the editor even when the edit trigger cannot (requires the Drive API v3 advanced service).
+function listRevisions(spreadsheetIds, since) {
+  if (!Array.isArray(spreadsheetIds) || !spreadsheetIds.length || spreadsheetIds.length > 50) throw new Error('Invalid spreadsheet list');
+  const sinceTime = Date.parse(since);
+  if (!isFinite(sinceTime)) throw new Error('Invalid revision window');
+  const files = spreadsheetIds.map(function(id) {
+    try {
+      const file = Drive.Files.get(id, { fields: 'name' });
+      const revisions = [];
+      let pageToken;
+      do {
+        const page = Drive.Revisions.list(id, { pageSize: 1000, pageToken: pageToken, fields: 'nextPageToken,revisions(id,modifiedTime,lastModifyingUser(displayName,emailAddress))' });
+        (page.revisions || []).forEach(function(revision) {
+          if (Date.parse(revision.modifiedTime) < sinceTime) return;
+          const user = revision.lastModifyingUser || {};
+          revisions.push({ id: String(revision.id), modifiedTime: revision.modifiedTime, editorEmail: user.emailAddress || null, editorName: user.displayName || null });
+        });
+        pageToken = page.nextPageToken;
+      } while (pageToken);
+      return { spreadsheetId: id, name: file.name || null, revisions: revisions };
+    } catch (error) {
+      return { spreadsheetId: id, error: error.message || String(error) };
+    }
+  });
+  return { success: true, files: files };
 }

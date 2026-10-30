@@ -2,6 +2,7 @@ import { bangkokDate, daysFrom } from "./dates.js"
 
 export const NOTIFICATION_TIME_ZONE = "Asia/Bangkok"
 export const NO_ACTIVITY_MS = 120 * 60 * 60 * 1000
+export const RESUMED_VISIBLE_MS = 24 * 60 * 60 * 1000
 export const DIGEST_PERSONAL_LIMIT = 20
 export const DIGEST_OWNER_LIMIT = 10
 export const MANUAL_TASK_LIMIT = 20
@@ -117,6 +118,13 @@ export function isNoActivity(state, task, now = new Date()) {
   const snoozedUntil = state.snoozedUntil ? new Date(`${state.snoozedUntil}T23:59:59+07:00`) : null
   if (snoozedUntil && snoozedUntil.getTime() >= new Date(now).getTime()) return false
   return activityAgeMs(state.lastActivityAt, now) >= NO_ACTIVITY_MS
+}
+
+// A task that leaves No Activity stays on Follow-up with an "updated" badge for a day.
+export function isRecentlyResumed(state, task, now = new Date()) {
+  if (!task || task.done || task.active === false || !state?.resumedAt) return false
+  const age = activityAgeMs(state.resumedAt, now)
+  return age !== null && age < RESUMED_VISIBLE_MS && !isNoActivity(state, task, now)
 }
 
 export function digestCategory(task, status = "not_started", today = bangkokDate()) {

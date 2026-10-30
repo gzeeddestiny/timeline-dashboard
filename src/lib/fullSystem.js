@@ -503,6 +503,8 @@ export async function fetchActionHistory(filters = {}) {
   return result
 }
 
+export const fetchEmployeeActivity = () => fetchActionHistory({ view: 'employees' })
+
 export async function setupActivityTracking(index = 0) {
   const response = await fetch(`/api/activity?action=setup&index=${index}`, { method: 'POST', headers: await authHeaders() })
   const result = await response.json()

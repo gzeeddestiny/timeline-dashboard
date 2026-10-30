@@ -20,9 +20,18 @@ class MemorySheet {
     return {
       getSheet:()=>sheet,getRow:()=>row,getColumn:()=>col,getLastRow:()=>row+height-1,
       getLastColumn:()=>col+width-1,getNumRows:()=>height,getNumColumns:()=>width,
+      getA1Notation:()=>`R${row}C${col}`+(height>1||width>1?`:R${row+height-1}C${col+width-1}`:''),
+      createTextFinder:(text)=>{
+        const finder={matchEntireCell:()=>finder,findNext:()=>{
+          for (let r=0;r<height;r++) for (let c=0;c<width;c++) if (String(sheet.rows[row+r-1]?.[col+c-1] ?? '')===text) return sheet.getRange(row+r,col+c)
+          return null
+        }}
+        return finder
+      },
       getValues:()=>Array.from({length:height},(_,r)=>Array.from({length:width},(_,c)=>sheet.rows[row+r-1]?.[col+c-1] ?? '')),
       getDisplayValues() { return this.getValues().map((r)=>r.map(String)) },
       getDisplayValue() { return this.getDisplayValues()[0][0] },
+      getValue() { return this.getValues()[0][0] },
       setValue(value) { return this.setValues([[value]]) },
       setValues(values) { values.forEach((r,i)=>r.forEach((v,j)=>{ sheet.rows[row+i-1] ||= []; sheet.rows[row+i-1][col+j-1]=v })); return this },
     }
@@ -191,4 +200,65 @@ test('interrupted write-ahead records become visible gaps rather than fabricated
   assert.deepEqual(h.deliveries.at(-1).events[0].changes,{})
   assert.match(h.deliveries.at(-1).events[0].historyGap,/ไม่สามารถยืนยัน/)
   assert.equal(JSON.parse(queue.rows[1][1]).changes.done.after,true)
+})
+
+test('edits to any other cell in a task row are activity with tab and range',async()=>{
+  const h=await harness()
+  h.task.rows.forEach((row,index)=>row.push(index===0?'Status':''))
+  h.task.rows[1][7]='รอลูกค้า'
+  h.context.captureSheetActivity({range:h.task.getRange(2,8),oldValue:undefined,value:'รอลูกค้า'})
+  const event=h.deliveries.at(-1).events[0]
+  assert.equal(event.taskKey,'sheet:1:task')
+  assert.deepEqual(event.changes,{'cell:status':{before:null,after:'รอลูกค้า'}})
+  assert.equal(event.sheetName,'Tasks')
+  assert.equal(event.range,'R2C8')
+  assert.equal(event.historyGap,null)
+})
+
+test('a pasted row without Task ID is reported without discarding identified rows',async()=>{
+  const h=await harness()
+  h.task.rows.push([false,'New row','AE One','2026-09-12','','2026-09-13',''])
+  h.task.rows[2][5]='2026-09-20'; h.task.rows[3][5]='2026-09-21'
+  h.context.captureSheetActivity({range:h.task.getRange(3,6,2,1),user:{getEmail:()=> 'editor@example.com'}})
+  const events=h.deliveries.at(-1).events
+  assert.equal(events.length,2)
+  assert.equal(events[0].taskKey,'sheet:1:other')
+  assert.equal(events[0].changes['date:gd timeline'].after,'2026-09-20')
+  assert.equal(events[1].scope,'tab')
+  assert.deepEqual(events[1].changes,{})
+  assert.match(events[1].historyGap,/แถว 4/)
+  assert.equal(events[1].actorEmail,'editor@example.com')
+  assert.equal(h.props.has('ACTIVITY_ERROR_sheet'),false)
+})
+
+test('a task tab created after installation is tracked on its first edit; other tabs are ignored',async()=>{
+  const h=await harness()
+  const tab=new MemorySheet('November',structuredClone(h.task.rows),9)
+  const notes=new MemorySheet('Notes',[['anything']],10)
+  for (const sheet of [tab,notes]) { sheet.parent=h.source; h.source.getSheets().push(sheet) }
+  const before=h.deliveries.length
+  h.context.captureSheetActivity({range:notes.getRange(1,1),oldValue:'a',value:'b'})
+  assert.equal(h.deliveries.length,before)
+  tab.rows[1][0]=true
+  h.context.captureSheetActivity({range:tab.getRange(2,1),oldValue:'FALSE',value:'TRUE'})
+  assert.deepEqual(JSON.parse(h.props.get('ACTIVITY_SOURCES')).sheet,[1,9])
+  const event=h.deliveries.at(-1).events[0]
+  assert.equal(event.taskKey,'sheet:9:task')
+  assert.deepEqual(event.changes,{done:{before:false,after:true}})
+  assert.match(event.historyGap,/snapshot/)
+})
+
+test('revision listing returns editors after the window and isolates per-file failures',async()=>{
+  const h=await harness()
+  h.context.Drive={
+    Files:{get:(id)=>{ if (id==='broken') throw new Error('No access'); return {name:'Kiss Kitchen'} }},
+    Revisions:{list:(_id,options)=>options.pageToken
+      ? {revisions:[{id:3,modifiedTime:'2026-10-30T03:00:00Z',lastModifyingUser:{displayName:'Editor',emailAddress:'editor@example.com'}}]}
+      : {nextPageToken:'p2',revisions:[{id:1,modifiedTime:'2026-10-01T00:00:00Z',lastModifyingUser:{}},{id:2,modifiedTime:'2026-10-30T02:00:00Z',lastModifyingUser:{displayName:'Hidden'}}]}},
+  }
+  const result=h.context.listRevisions(['sheet','broken'],'2026-10-29T00:00:00Z')
+  assert.equal(result.files[0].name,'Kiss Kitchen')
+  assert.equal(JSON.stringify(result.files[0].revisions.map((r)=>[r.id,r.editorEmail])),JSON.stringify([['2',null],['3','editor@example.com']]))
+  assert.equal(result.files[1].error,'No access')
+  assert.throws(()=>h.context.listRevisions([],'2026-10-29T00:00:00Z'),/Invalid spreadsheet list/)
 })

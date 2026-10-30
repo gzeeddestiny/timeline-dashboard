@@ -155,6 +155,8 @@ export async function loadNotificationData(admin) {
         lastActivityActorEmail: state.last_activity_actor_email,
         snoozedUntil: state.snoozed_until,
         snoozeReason: state.snooze_reason,
+        resumedAt: state.resumed_at || null,
+        lastActivityActorInferred: Boolean(state.last_activity_actor_inferred),
       } : null,
     }
   })

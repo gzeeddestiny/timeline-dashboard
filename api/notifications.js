@@ -13,7 +13,7 @@ import {
 } from "./_notifications.js"
 import { buildNotificationEmail } from "../src/lib/notificationFormat.js"
 import { bangkokDate, daysFrom, validIsoDate } from "../src/lib/dates.js"
-import { daysSinceActivity, digestCategory, isNoActivity } from "../src/lib/notifications.js"
+import { daysSinceActivity, digestCategory, isNoActivity, isRecentlyResumed } from "../src/lib/notifications.js"
 import { fetchAllRows } from "../src/lib/supabasePages.js"
 
 export const config = { maxDuration: 60 }
@@ -55,6 +55,7 @@ function publicTask(task, now = new Date()) {
     activity: task.activity,
     daysSinceUpdate: task.activity?.lastActivityAt ? daysSinceActivity(task.activity.lastActivityAt, now) : null,
     noActivity: isNoActivity(task.activity, task, now),
+    updatedRecently: isRecentlyResumed(task.activity, task, now),
   }
 }
 
@@ -152,7 +153,7 @@ async function handleGet(request, response, context, action) {
         projects: [...new Map(visible.filter((task) => task.projectId).map((task) => [task.projectId, { id: task.projectId, name: task.projectName }])).values()],
         tasks: visible.map((task) => ({ key: task.taskKey, name: `${task.projectName} · ${task.topic}` })),
       },
-      items: visible.filter((task) => !task.done && (isNoActivity(task.activity, task, now) || task.activity?.snoozedUntil)).map((task) => publicTask(task, now)),
+      items: visible.filter((task) => !task.done && (isNoActivity(task.activity, task, now) || task.activity?.snoozedUntil || isRecentlyResumed(task.activity, task, now))).map((task) => publicTask(task, now)),
       dataIssues: isAdmin ? notificationDataIssues(data) : [],
     })
   }

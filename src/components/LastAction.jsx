@@ -7,6 +7,6 @@ export default function LastAction({ activity }) {
   return <>
     <span>{formatThaiDateTime(activity.lastActivityAt)}</span>
     {fields.length > 0 && <span className="block text-gray-500">{fields.join(', ')}</span>}
-    <span className="block text-gray-400">{activity.lastActivitySource === 'google_sheet' ? 'Google Sheet' : 'Dashboard'} · {activity.lastActivityActorEmail || 'ไม่ทราบผู้แก้'}</span>
+    <span className="block text-gray-400">{activity.lastActivityKind === 'sheet_sync_detected' ? 'Google Sheet (ตรวจพบจาก Sync)' : activity.lastActivitySource === 'google_sheet' ? 'Google Sheet' : 'Dashboard'} · {activity.lastActivityActorEmail || 'ไม่ทราบผู้แก้'}{activity.lastActivityActorInferred && ' (อนุมานจาก Version history)'}</span>
   </>
 }
