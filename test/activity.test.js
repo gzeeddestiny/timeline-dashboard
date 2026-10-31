@@ -71,6 +71,11 @@ test('revision collection stores editors, overlaps a day and isolates file error
   assert.equal(stored[3].onConflict,'spreadsheet_id,revision_id')
   assert.deepEqual(calls.find((c)=>c[0]==='rpc').slice(1),['attribute_sheet_actors',{p_since:'2026-10-28T10:00:00.000Z',p_collected_at:'2026-10-30T03:00:00.000Z'}])
   assert.deepEqual(result,{revisions:1,attributed:2,errors:[{spreadsheetId:'other',error:'No access'}]})
+
+  calls.length=0
+  const failed=async()=>({success:true,files:[{spreadsheetId:'sheet',error:'No Drive scope'},{spreadsheetId:'other',error:'No Drive scope'}]})
+  assert.deepEqual(await collectSheetRevisions(admin,{call:failed,now:new Date('2026-10-30T03:00:00Z')}),{revisions:0,attributed:0,errors:[{spreadsheetId:'sheet',error:'No Drive scope'},{spreadsheetId:'other',error:'No Drive scope'}]})
+  assert.equal(calls.some((c)=>c[0]==='rpc'),false)
 })
 
 test('resolves moved Task ID and all task date headers', () => {

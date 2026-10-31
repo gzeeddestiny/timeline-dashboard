@@ -543,7 +543,8 @@ function listRevisions(spreadsheetIds, since) {
   if (!isFinite(sinceTime)) throw new Error('Invalid revision window');
   const files = spreadsheetIds.map(function(id) {
     try {
-      const file = Drive.Files.get(id, { fields: 'name' });
+      // Task sheets can live on shared drives, which Drive v3 hides unless asked.
+      const file = Drive.Files.get(id, { fields: 'name', supportsAllDrives: true });
       const revisions = [];
       let pageToken;
       do {

@@ -121,6 +121,8 @@ export async function collectSheetRevisions(admin, { call = callAppsScript, now 
     const saved = await admin.from('sheet_revisions').upsert(rows.slice(index, index + 500), { onConflict: 'spreadsheet_id,revision_id' })
     if (saved.error) throw saved.error
   }
+  // With no file listed (e.g. Drive access revoked) every event would be finalized as unknown.
+  if (errors.length && errors.length === result.files.filter((file) => ids.includes(file.spreadsheetId)).length) return { revisions: 0, attributed: 0, errors }
   const attributed = await admin.rpc('attribute_sheet_actors', { p_since: since, p_collected_at: now.toISOString() })
   if (attributed.error) throw attributed.error
   return { revisions: rows.length, attributed: attributed.data, errors }
