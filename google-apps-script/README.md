@@ -34,7 +34,7 @@
 Google มักไม่ส่ง `e.user` ให้ installable trigger เมื่อผู้แก้ใช้ Gmail ส่วนตัวหรืออยู่คนละโดเมน ระบบจึงอ่าน Version history ของแต่ละไฟล์ (`list_revisions`) ทุก 15 นาทีผ่าน `/api/activity?action=collect-revisions` แล้วจับคู่กับ event ที่ไม่มีผู้แก้ ระบบจะระบุชื่อเฉพาะเมื่อช่วงเวลานั้นมีผู้แก้ไฟล์เพียงคนเดียว ถ้ามีหลายคนจะแสดงรายชื่อผู้ที่อาจแก้โดยไม่เดา
 
 1. ใน Apps Script editor ไปที่ **Services** แล้วเพิ่ม **Drive API** เวอร์ชัน **v3** โดยใช้ identifier `Drive`
-2. Authorize ใหม่ด้วยบัญชีเจ้าของ Script ซึ่งต้องเข้าถึงทุก Sheet ที่ลงทะเบียนอยู่ แล้ว deploy Web app version ใหม่
+2. Authorize ใหม่ด้วยบัญชีเจ้าของ Script ซึ่งต้องเข้าถึงทุก Sheet ที่ลงทะเบียนอยู่ แล้ว deploy Web app version ใหม่ หน้าขอสิทธิ์ของ Google ให้เลือกสิทธิ์ทีละข้อได้ ถ้าไม่ได้ติ๊ก Google Drive ไว้ `list_revisions` จะตอบ `You do not have permission to call drive.files.get` และ editor จะไม่ถามสิทธิ์ซ้ำเอง ให้เลือกฟังก์ชัน `authorizeDrive` แล้วกดเรียกใช้ จากนั้นติ๊ก Drive ในหน้าขอสิทธิ์
 3. Apply migration `20261030100000_sync_detected_activity.sql` แล้วรัน `supabase/cron.sql` อีกครั้งเพื่อเพิ่ม job `timeline-dashboard-sheet-revisions`
 4. กด **เปิด / ตรวจการติดตาม Sheet** อีกครั้ง แล้วตรวจการ์ด “พนักงานอัพเดท Sheet ล่าสุด” ในหน้า Follow-up
 

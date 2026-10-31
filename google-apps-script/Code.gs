@@ -562,3 +562,9 @@ function listRevisions(spreadsheetIds, since) {
   });
   return { success: true, files: files };
 }
+
+// Run once from the editor when Drive access is missing: granular consent lets the owner skip the Drive scope.
+function authorizeDrive() {
+  ScriptApp.requireScopes(ScriptApp.AuthMode.FULL, ['https://www.googleapis.com/auth/drive']);
+  return Drive.About.get({ fields: 'user(emailAddress)' }).user.emailAddress;
+}
