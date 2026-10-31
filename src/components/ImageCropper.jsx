@@ -1,11 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from "react"
+import { Dialog } from "@base-ui/react/dialog"
+import { MagnifyingGlassMinusIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlassMinus"
+import { MagnifyingGlassPlusIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlassPlus"
+import { avatarBlobFromCanvas } from "../lib/teamAvatar"
 
 /**
  * Simple circular image cropper — drag to pan, scroll/slider to zoom.
  * No external dependencies, uses Canvas API.
  *
  * @param {string} imageSrc — base64 or URL of the image to crop
- * @param {function} onCrop — (croppedBase64) => void
+ * @param {function} onCrop — (croppedBlob) => void
  * @param {function} onCancel — () => void
  */
 export default function ImageCropper({ imageSrc, onCrop, onCancel, saving = false }) {
@@ -156,7 +160,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel, saving = fals
   }
 
   // Crop & output
-  const handleCrop = () => {
+  const handleCrop = async () => {
     const img = imgRef.current
     if (!img) return
     const s = stateRef.current
@@ -174,13 +178,20 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel, saving = fals
     ctx.clip()
     ctx.drawImage(img, s.x * ratio, s.y * ratio, img.width * s.scale * ratio, img.height * s.scale * ratio)
 
-    onCrop(out.toDataURL("image/jpeg", 0.85))
+    try {
+      setError("")
+      await onCrop(await avatarBlobFromCanvas(out))
+    } catch (cropError) {
+      setError(cropError.message || "สร้างไฟล์รูปไม่สำเร็จ กรุณาเลือกรูปใหม่")
+    }
   }
 
   return (
-    <div className="ui-overlay-enter fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={saving ? undefined : onCancel}>
-      <div role="dialog" aria-modal="true" aria-labelledby="crop-photo-title" className="ui-popover ui-modal-enter rounded-2xl p-5 space-y-4 w-72" onClick={(e) => e.stopPropagation()}>
-        <div id="crop-photo-title" className="text-sm font-bold text-purple-900 text-center">Crop Photo</div>
+    <Dialog.Root open onOpenChange={(open) => { if (!open && !saving) onCancel() }}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="ui-overlay-enter fixed inset-0 z-[var(--z-alert)] bg-black/45" />
+        <Dialog.Popup className="ui-popover ui-modal-enter fixed left-1/2 top-1/2 z-[calc(var(--z-alert)+1)] w-72 -translate-x-1/2 -translate-y-1/2 space-y-4 p-5">
+        <Dialog.Title id="crop-photo-title" className="text-center text-sm font-bold text-[var(--ui-text)]">Crop Photo</Dialog.Title>
         {error && <p className="text-center text-xs text-red-600">{error}</p>}
 
         {/* Canvas */}
@@ -203,9 +214,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel, saving = fals
 
         {/* Zoom slider */}
         <div className="flex items-center gap-2 px-2">
-          <svg className="h-3.5 w-3.5 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
-          </svg>
+          <MagnifyingGlassMinusIcon aria-hidden="true" className="shrink-0 text-gray-400" size={16} />
           <input
             type="range"
             min="0"
@@ -215,9 +224,7 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel, saving = fals
             onChange={onSliderChange}
             className="flex-1 h-1.5 accent-purple-500"
           />
-          <svg className="h-3.5 w-3.5 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7" />
-          </svg>
+          <MagnifyingGlassPlusIcon aria-hidden="true" className="shrink-0 text-gray-400" size={16} />
         </div>
 
         {/* Buttons */}
@@ -237,7 +244,8 @@ export default function ImageCropper({ imageSrc, onCrop, onCancel, saving = fals
             {saving ? "กำลังบันทึก…" : "ใช้รูปนี้"}
           </button>
         </div>
-      </div>
-    </div>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }

@@ -1,0 +1,42 @@
+[
+  {
+    "table": "tasks_current",
+    "source": 3439,
+    "target": 3439
+  },
+  {
+    "table": "task_workflow",
+    "source": 38,
+    "target": 38
+  },
+  {
+    "table": "team_members",
+    "source": 9,
+    "target": 9
+  },
+  {
+    "table": "access_list",
+    "source": 10,
+    "target": 10
+  },
+  {
+    "table": "sheets",
+    "source": 6,
+    "target": 6
+  },
+  {
+    "table": "assignments",
+    "source": 20,
+    "target": 20
+  },
+  {
+    "table": "task_events",
+    "source": 556,
+    "target": 556
+  },
+  {
+    "table": "notifications",
+    "source": 51,
+    "target": 51
+  }
+]

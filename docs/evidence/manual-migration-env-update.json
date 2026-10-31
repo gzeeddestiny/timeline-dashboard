@@ -1,0 +1,42 @@
+[
+  {
+    "environment": "production",
+    "key": "SUPABASE_URL",
+    "status": 0
+  },
+  {
+    "environment": "production",
+    "key": "SUPABASE_SECRET_KEY",
+    "status": 0
+  },
+  {
+    "environment": "production",
+    "key": "VITE_SUPABASE_URL",
+    "status": 0
+  },
+  {
+    "environment": "production",
+    "key": "VITE_SUPABASE_PUBLISHABLE_KEY",
+    "status": 0
+  },
+  {
+    "environment": "preview",
+    "key": "SUPABASE_URL",
+    "status": 0
+  },
+  {
+    "environment": "preview",
+    "key": "SUPABASE_SECRET_KEY",
+    "status": 0
+  },
+  {
+    "environment": "preview",
+    "key": "VITE_SUPABASE_URL",
+    "status": 0
+  },
+  {
+    "environment": "preview",
+    "key": "VITE_SUPABASE_PUBLISHABLE_KEY",
+    "status": 0
+  }
+]

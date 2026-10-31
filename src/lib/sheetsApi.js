@@ -6,7 +6,7 @@
 //   C = Responsibility
 //   D = Due Date   (date cell)
 //   E = Actual Submit
-//   F = Task ID    (hidden, stable UUID)
+//   Task ID is located by its header (hidden, stable UUID)
 //
 // Each tab name  = Client Name   (e.g. "Nike TH", "PTT Exploration")
 // Spreadsheet title → Month label (parsed from the sheet name itself):
@@ -15,9 +15,36 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { bangkokDate, daysFrom, parseSheetDate } from "./dates.js"
-import { columnName, findTaskHeaderRow, isSecondaryScheduleHeader, taskRange } from "./sheetSchema.js"
+import { columnName, findTaskHeaderRow, isSecondaryScheduleHeader, taskRange, taskColumns, taskHeaderValues } from "./sheetSchema.js"
 
 const BASE_URL = "https://sheets.googleapis.com/v4/spreadsheets"
+const RETRYABLE_SHEET_STATUS = new Set([429, 500, 502, 503, 504])
+
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+export function retryDelay(response, attempt) {
+  const retryAfter = response?.headers?.get?.("retry-after")
+  const seconds = retryAfter && Number(retryAfter)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 10_000)
+  return [400, 1200, 2800][attempt] ?? 2800
+}
+
+export async function fetchSheetResource(url, { fetchImpl = fetch, attempts = 3 } = {}) {
+  let lastError
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, { signal: AbortSignal.timeout(15_000) })
+      if (response.ok || !RETRYABLE_SHEET_STATUS.has(response.status) || attempt === attempts - 1) return response
+      lastError = new Error(`Google Sheets request failed (${response.status})`)
+      await wait(retryDelay(response, attempt))
+    } catch (error) {
+      lastError = error
+      if (attempt === attempts - 1 || (error?.name !== "AbortError" && error?.name !== "TimeoutError")) throw error
+      await wait([400, 1200, 2800][attempt])
+    }
+  }
+  throw lastError
+}
 
 // ── File Color Palette ─────────────────────────────────────────────────────
 // Soft pastel backgrounds for each Google Sheet file. Designed to be
@@ -162,8 +189,8 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
     seenSpreadsheets.add(spreadsheetId)
 
     // 1️⃣  Spreadsheet metadata → get title + all tab names
-    const metaRes = await fetch(`${BASE_URL}/${encodeURIComponent(spreadsheetId)}?fields=properties.title,sheets.properties&key=${encodeURIComponent(apiKey)}`, { signal: AbortSignal.timeout(15_000) })
-    if (!metaRes.ok) throw new Error(`Google Sheets metadata failed (${metaRes.status})`)
+    const metaRes = await fetchSheetResource(`${BASE_URL}/${encodeURIComponent(spreadsheetId)}?fields=properties.title,sheets.properties&key=${encodeURIComponent(apiKey)}`)
+    if (!metaRes.ok) throw new Error(`Google Sheets metadata failed for ${spreadsheetId} (${metaRes.status})`)
     const meta    = await metaRes.json()
 
     if (meta.error) {
@@ -197,13 +224,12 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
     }
 
     const ranges = [
-      ...tabInfos.map(({ title }) => taskRange(title)),
-      ...tabInfos.map(({ title, taskIdColumn }) => taskRange(title, `${taskIdColumn}1:${taskIdColumn}`)),
+      ...tabInfos.map(({ title, taskIdColumn }) => taskRange(title, `A1:${taskIdColumn}`)),
     ].map((range) => `ranges=${encodeURIComponent(range)}`).join("&")
     const batchUrl = `${BASE_URL}/${encodeURIComponent(spreadsheetId)}/values:batchGet?${ranges}&key=${encodeURIComponent(apiKey)}&valueRenderOption=UNFORMATTED_VALUE`
 
-    const batchRes = await fetch(batchUrl, { signal: AbortSignal.timeout(15_000) })
-    if (!batchRes.ok) throw new Error(`Google Sheets data failed (${batchRes.status})`)
+    const batchRes = await fetchSheetResource(batchUrl)
+    if (!batchRes.ok) throw new Error(`Google Sheets data failed for ${spreadsheetId} (${batchRes.status})`)
     const batchData = await batchRes.json()
 
     if (batchData.error) {
@@ -214,13 +240,13 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
       const tabTitle = tab.title
       const tabGid = gidMap.get(tabTitle) ?? tab.gid
       const values = batchData.valueRanges?.[tabIndex]?.values ?? []
-      const taskIds = batchData.valueRanges?.[tabInfos.length + tabIndex]?.values ?? []
       const headerRowIndex = findTaskHeaderRow(values)
       if (headerRowIndex < 0) {
         issues.push({ spreadsheetId, sheetGid: tabGid, rowIndex: 1, clientName: tabTitle, type: "skipped_tab", message: "Task header was not found in rows 1–15" })
         continue
       }
-      if (String(taskIds[headerRowIndex]?.[0] || "").trim().toLowerCase() !== "task id") {
+      const columns = taskColumns(taskHeaderValues(values, headerRowIndex))
+      if (columns.taskId < 0) {
         issues.push({ spreadsheetId, sheetGid: tabGid, rowIndex: headerRowIndex + 1, clientName: tabTitle, type: "invalid_task_id_header", message: "Task ID column is not provisioned" })
         continue
       }
@@ -231,7 +257,7 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
         // It uses Post Date/Status columns and must not be counted as task rows.
         if (isSecondaryScheduleHeader(row)) break
         // A=status(bool)  B=topic  C=responsibility  D=dueDate  E=actualSubmit
-        const [statusRaw, topic, responsibility, dueDateRaw, actualSubmitRaw] = row
+        const [statusRaw, topic, responsibility, dueDateRaw, actualSubmitRaw] = [columns.done, columns.topic, columns.responsibility, columns.dueDate, columns.actualSubmit].map((index) => row[index])
 
         if (!topic?.toString().trim()) continue   // skip blank rows
         if ((statusRaw === "" || statusRaw == null) && !String(responsibility || "").trim() && !dueDateRaw && !actualSubmitRaw) continue
@@ -241,7 +267,7 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
           statusRaw === 1 ||
           String(statusRaw).toLowerCase() === "true"
 
-        const taskId = String(taskIds[rowIdx]?.[0] || "").trim()
+        const taskId = String(row[columns.taskId] || "").trim()
         const source = { spreadsheetId, sheetGid: tabGid, rowIndex: rowIdx + 1, clientName: tabTitle }
         if (!taskId) {
           issues.push({ ...source, type: "missing_task_id", message: "Task ID is blank" })
@@ -263,7 +289,14 @@ export async function fetchAllSheetsData(sheetList, apiKey) {
         const parsedActualSubmit = parseSheetDate(actualSubmitRaw)
         if (actualSubmitRaw && !parsedActualSubmit) issues.push({ ...source, type: "invalid_actual_submit", message: `Invalid actual submit: ${actualSubmitRaw}` })
 
+        const sourceDates = Object.fromEntries(columns.dates.filter(({ index }) => ![columns.dueDate, columns.actualSubmit].includes(index)).map(({ name, index }) => {
+          const raw = row[index]
+          const value = parseSheetDate(raw)
+          if (raw && !value) issues.push({ ...source, taskKey: stableKey, type: "invalid_task_date", message: `Invalid ${name}: ${raw}` })
+          return [name, value || (raw ? String(raw) : null)]
+        }))
         allTasks.push({
+          sourceDates,
           id:             nextId++,
           clientName:     tabTitle,
           done,

@@ -58,12 +58,63 @@ export function mergeRemote(local, remote, dirtyKeys, resource) {
   return next
 }
 
+export function overlayPendingProjects(base, pending = []) {
+  const next = Object.fromEntries((base || []).map((project) => [project.id, project]))
+  pending.filter((item) => item.resource === "projectAssignments").forEach(({ key, value }) => {
+    if (!next[key] || !value || typeof value !== "object") return
+    next[key] = { ...next[key], assignment: value }
+  })
+  return Object.values(next)
+}
+
+export function mergeRemoteProjects(local, remote, pendingWrites = new Map()) {
+  const next = Object.fromEntries((remote || []).map((project) => [project.id, project]))
+  const localById = Object.fromEntries((local || []).map((project) => [project.id, project]))
+  pendingWrites.forEach((item, dirtyKey) => {
+    if (item.resource !== "projectAssignments") return
+    const projectId = dirtyKey.slice("projectAssignments:".length)
+    if (!localById[projectId]) return
+    next[projectId] = { ...(next[projectId] || localById[projectId]), assignment: item.value || {} }
+  })
+  return Object.values(next)
+}
+
 export function loadCachedSharedState() {
   try {
     const cached = sessionStorage.getItem(SHARED_CACHE_KEY) || localStorage.getItem(SHARED_CACHE_KEY)
     if (cached && !sessionStorage.getItem(SHARED_CACHE_KEY)) sessionStorage.setItem(SHARED_CACHE_KEY, cached)
     localStorage.removeItem(SHARED_CACHE_KEY)
-    return JSON.parse(cached || "null")
+    const parsed = JSON.parse(cached || "null")
+    if (parsed?.brandWorkstreams && !parsed.brandProjects) {
+      const { brandWorkstreams: legacyProjects, ...current } = parsed
+      return {
+        ...current,
+        brandProjects: legacyProjects.map((project) => ({
+          ...project,
+          contractId: project.contractId || null,
+          sourceTabKey: project.sourceTabKey || project.sourceTabKeys?.[0] || "",
+          startDate: project.startDate || "",
+          endDate: project.endDate || "",
+        })),
+      }
+    }
+    if (!parsed) return parsed
+    return {
+      ...parsed,
+      brandProjects: (parsed.brandProjects || []).map((project) => ({
+        ...project,
+        contractId: project.contractId || null,
+        sourceTabKey: project.sourceTabKey || project.sourceTabKeys?.[0] || "",
+        startDate: project.startDate || "",
+        endDate: project.endDate || "",
+      })),
+      brandContracts: (parsed.brandContracts || []).map((contract) => ({
+        ...contract,
+        brandId: contract.brandId || null,
+        type: contract.type || (contract.termMonths ? "always_on" : "one_time"),
+        renewalStatus: contract.renewalStatus || "not_contacted",
+      })),
+    }
   }
   catch { return null }
 }

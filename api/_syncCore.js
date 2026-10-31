@@ -1,5 +1,5 @@
 import { fetchAllSheetsData } from "../src/lib/sheetsApi.js"
-import { taskKey } from "../src/lib/sharedState.js"
+import { normalizeBrandKey, taskKey } from "../src/lib/sharedState.js"
 import { fetchAllRows } from "../src/lib/supabasePages.js"
 import { callAppsScript } from "./_appsScript.js"
 import { addTransitionMetrics, bangkokDate, buildMetricRows } from "./_metrics.js"
@@ -33,6 +33,7 @@ function taskRow(task, syncedAt) {
     due_date: task.dueDate || null,
     actual_submit: task.actualSubmit || null,
     done: Boolean(task.done),
+    source_dates: task.sourceDates || {},
     active: true,
     removed_at: null,
     source_synced_at: syncedAt,
@@ -94,6 +95,7 @@ export async function runSync({ admin, force = false, triggerType = force ? "man
     const googleKey = process.env.GOOGLE_SHEETS_API_KEY
     if (!googleKey) throw new Error("Google Sheets server API key is not configured")
     const previousTasks = await fetchAllRows((from, to) => admin.from("tasks_current").select("*").eq("active", true).order("task_key").range(from, to))
+    const syncedAt = new Date().toISOString()
     let result = sheets.length ? await fetchAllSheetsData(sheets, googleKey) : { tasks: [], issues: [] }
     syncIssues = result.issues
     const repairTargets = taskIdRepairTargets(result.issues)
@@ -109,7 +111,6 @@ export async function runSync({ admin, force = false, triggerType = force ? "man
     if (identityIssues.length) {
       throw new Error(`Sync stopped: ${identityIssues.length} Task ID issue(s) still need attention.`)
     }
-    const syncedAt = new Date().toISOString()
     const rows = tasks.map((task) => taskRow(task, syncedAt))
     for (let index = 0; index < rows.length; index += 500) {
       const staged = rows.slice(index, index + 500).map((row) => ({ run_id: runId, ...row }))
@@ -117,15 +118,25 @@ export async function runSync({ admin, force = false, triggerType = force ? "man
       if (error) throw error
     }
 
-    const [workflowRows, teamRows, brandRows, assignmentRows] = await Promise.all([
+    const [workflowRows, teamRows, brandRows, projectRows, projectSourceRows, legacyAssignmentRows] = await Promise.all([
       fetchAllRows((from, to) => admin.from("task_workflow").select("task_key,status").order("task_key").range(from, to)),
       fetchAllRows((from, to) => admin.from("team_members").select("name,role,avatar").order("name").range(from, to)),
       fetchAllRows((from, to) => admin.from("brands").select("tab_key,brand_name").order("tab_key").range(from, to)),
+      fetchAllRows((from, to) => admin.from("brand_workstreams").select("id,assignment").eq("active", true).order("id").range(from, to)),
+      fetchAllRows((from, to) => admin.from("brand_workstream_sources").select("workstream_id,tab_key").order("tab_key").range(from, to)),
       fetchAllRows((from, to) => admin.from("assignments").select("brand_key,value").order("brand_key").range(from, to)),
     ])
     const workflow = Object.fromEntries(workflowRows.map((row) => [row.task_key, row.status]))
     const brands = Object.fromEntries(brandRows.map((row) => [row.tab_key, row.brand_name]))
-    const assignments = Object.fromEntries(assignmentRows.map((row) => [row.brand_key, row.value || {}]))
+    const assignmentByProject = new Map(projectRows.map((row) => [row.id, row.assignment || {}]))
+    const assignments = Object.fromEntries(projectSourceRows.flatMap((row) => assignmentByProject.has(row.workstream_id) ? [[row.tab_key, assignmentByProject.get(row.workstream_id)]] : []))
+    const legacyAssignments = Object.fromEntries(legacyAssignmentRows.map((row) => [row.brand_key, row.value || {}]))
+    Object.entries(brands).forEach(([tabKeyValue, brandName]) => {
+      if (Object.prototype.hasOwnProperty.call(assignments, tabKeyValue)) return
+      const legacyKey = normalizeBrandKey(brandName)
+      const legacy = legacyAssignments[legacyKey] || legacyAssignments[brandName]
+      if (legacy) assignments[tabKeyValue] = legacy
+    })
     const metricTasks = tasks.map((task) => ({ ...task, taskKey: taskKey(task) }))
     let metricRows = buildMetricRows(metricTasks, workflow, teamRows, brands, assignments, runId)
     const today = bangkokDate()

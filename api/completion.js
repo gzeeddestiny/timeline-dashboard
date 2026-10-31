@@ -30,6 +30,7 @@ export default async function handler(request, response) {
     }
     const result = await callAppsScript({
       action: "set_completion",
+      actorEmail: user.email,
       spreadsheetId: body.spreadsheetId,
       sheetGid: body.sheetGid,
       taskId: body.taskId,
@@ -38,7 +39,7 @@ export default async function handler(request, response) {
     })
 
     try {
-      const savedAt = new Date().toISOString()
+      const savedAt = result.occurredAt || new Date().toISOString()
       const { error } = await admin.rpc("finalize_completion", {
         p_task_key: body.taskKey,
         p_row_index: result.rowIndex || before.row_index,

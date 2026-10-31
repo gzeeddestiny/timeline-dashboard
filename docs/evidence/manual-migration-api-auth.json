@@ -1,0 +1,26 @@
+[
+  {
+    "domain": "magic-timeline-dashboard.vercel.app",
+    "path": "/api/workflow",
+    "method": "PATCH",
+    "status": 401
+  },
+  {
+    "domain": "magic-timeline-dashboard.vercel.app",
+    "path": "/api/cron-sync",
+    "method": "POST",
+    "status": 401
+  },
+  {
+    "domain": "magic-timeline-v2.vercel.app",
+    "path": "/api/workflow",
+    "method": "PATCH",
+    "status": 401
+  },
+  {
+    "domain": "magic-timeline-v2.vercel.app",
+    "path": "/api/cron-sync",
+    "method": "POST",
+    "status": 401
+  }
+]

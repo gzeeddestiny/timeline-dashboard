@@ -6,8 +6,9 @@ import { taskOwnerNames } from "../src/lib/teamConfig.js"
 export { bangkokDate }
 
 export function taskOwners(task, teamMembers, brands, assignments) {
-  const brand = brands[`${task.spreadsheetId}:${task.sheetGid}`] || extractBrandName(task.clientName)
-  const assignment = assignments[normalizeBrandKey(brand)] || assignments[task.clientName] || {}
+  const tabKey = `${task.spreadsheetId}:${task.sheetGid}`
+  const brand = brands[tabKey] || extractBrandName(task.clientName)
+  const assignment = assignments[tabKey] || assignments[normalizeBrandKey(brand)] || assignments[task.clientName] || {}
   return taskOwnerNames(task, teamMembers, assignment)
 }
 

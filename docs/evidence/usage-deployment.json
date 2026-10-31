@@ -1,0 +1,42 @@
+{
+  "checkedAt": "2026-09-28T18:57:00.224Z",
+  "deployment": "dpl_EiiZkS5NT8xfPvnk9gusBwEWsVHN",
+  "results": [
+    {
+      "url": "https://magic-timeline-dashboard.vercel.app/",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/main-5alyq4nT.js"
+    },
+    {
+      "url": "https://magic-timeline-dashboard.vercel.app/v2/",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/main-5alyq4nT.js"
+    },
+    {
+      "url": "https://magic-timeline-dashboard.vercel.app/v2/gantt",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/main-5alyq4nT.js"
+    },
+    {
+      "url": "https://magic-timeline-v2.vercel.app/",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/main-5alyq4nT.js"
+    },
+    {
+      "url": "https://magic-timeline-v2.vercel.app/v2/",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/main-5alyq4nT.js"
+    },
+    {
+      "url": "https://magic-timeline-v2.vercel.app/v2/gantt",
+      "status": 200,
+      "title": "MAGIC Timeline V2",
+      "entry": "/assets/main-5alyq4nT.js"
+    }
+  ]
+}

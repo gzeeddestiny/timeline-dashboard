@@ -1,0 +1,78 @@
+{
+  "checkedAt": "2026-09-29T11:07:08.152Z",
+  "project": "micjfmxdpxeswcgciyjt",
+  "tables": [
+    {
+      "table": "tasks_current",
+      "count": 3439,
+      "status": 206,
+      "error": null
+    },
+    {
+      "table": "task_workflow",
+      "count": 38,
+      "status": 200,
+      "error": null
+    },
+    {
+      "table": "team_members",
+      "count": 9,
+      "status": 200,
+      "error": null
+    },
+    {
+      "table": "access_list",
+      "count": 10,
+      "status": 200,
+      "error": null
+    },
+    {
+      "table": "sheets",
+      "count": 6,
+      "status": 200,
+      "error": null
+    },
+    {
+      "table": "assignments",
+      "count": 20,
+      "status": 200,
+      "error": null
+    },
+    {
+      "table": "brand_workstreams",
+      "count": 1,
+      "status": 200,
+      "error": null
+    },
+    {
+      "table": "contract_rounds",
+      "count": 0,
+      "status": 200,
+      "error": null
+    },
+    {
+      "table": "v2_plans",
+      "count": null,
+      "status": 204,
+      "error": null
+    },
+    {
+      "table": "v2_dependencies",
+      "count": null,
+      "status": 204,
+      "error": null
+    },
+    {
+      "table": "v2_comments",
+      "count": null,
+      "status": 204,
+      "error": null
+    },
+    {
+      "table": "v2_mentions",
+      "count": null,
+      "status": 204,
+      "error": null
+    }
+  ]
+}

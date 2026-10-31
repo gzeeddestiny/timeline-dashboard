@@ -6,6 +6,22 @@ const BANGKOK_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 })
 
+const THAI_DATE_FORMATTER = new Intl.DateTimeFormat("th-TH-u-ca-gregory", {
+  timeZone: "Asia/Bangkok",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+})
+
+const THAI_DATE_TIME_FORMATTER = new Intl.DateTimeFormat("th-TH-u-ca-gregory", {
+  timeZone: "Asia/Bangkok",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+})
+
 export function bangkokDate(now = new Date()) {
   const parts = BANGKOK_FORMATTER.formatToParts(now)
   const part = (type) => parts.find((item) => item.type === type)?.value
@@ -40,4 +56,20 @@ export function parseSheetDate(raw) {
 export function daysFrom(date, today = bangkokDate()) {
   if (!validIsoDate(date) || !validIsoDate(today)) return null
   return Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / DAY_MS)
+}
+
+export function formatThaiDate(value, optionsOrFallback = "-") {
+  const options = typeof optionsOrFallback === "object" ? optionsOrFallback : null
+  const fallback = options ? "-" : optionsOrFallback
+  if (!value) return fallback
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? new Date(`${value}T00:00:00+07:00`) : new Date(value)
+  if (Number.isNaN(date.getTime())) return fallback
+  const formatter = options ? new Intl.DateTimeFormat("th-TH-u-ca-gregory", { timeZone: "Asia/Bangkok", day: "numeric", month: "short", year: "numeric", ...options }) : THAI_DATE_FORMATTER
+  return formatter.format(date).replace(/\s*พ\.ศ\.\s*/, " ")
+}
+
+export function formatThaiDateTime(value, fallback = "-") {
+  if (!value) return fallback
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? fallback : THAI_DATE_TIME_FORMATTER.format(date).replace(/\s*พ\.ศ\.\s*/, " ")
 }

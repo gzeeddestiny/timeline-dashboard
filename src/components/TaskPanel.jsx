@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { listTaskEvents } from "../lib/fullSystem"
+import { AlertDialog } from "@base-ui/react/alert-dialog"
+import { Dialog } from "@base-ui/react/dialog"
+import { XIcon } from "@phosphor-icons/react/dist/csr/X"
+import { useCallback, useEffect, useState } from "react"
+import ActivityHistory from "./ActivityHistory"
 import { taskSheetUrl } from "../lib/sharedState"
 import Emoji from "./Emoji"
 import { emojiText } from "../lib/uiEmoji"
-
-const WORKFLOWS = [
-  ["not_started", emojiText("notStarted", "Not started")],
-  ["in_progress", emojiText("inProgress", "In progress")],
-  ["waiting_client", emojiText("waitingClient", "Waiting client")],
-  ["blocked", emojiText("blocked", "Blocked")],
-]
+import { formatThaiDate } from "../lib/dates"
+import WorkflowSelect from "./WorkflowSelect"
+import { MILESTONE_TYPES, completedLateDays, milestoneForTask, milestoneNeedsDate } from "../lib/brandTimeline"
 
 function statusLabel(status) {
   if (status === "saving") return <span className="text-[10px] text-purple-500"><Emoji name="save" /> Saving…</span>
@@ -33,6 +32,8 @@ export default function TaskPanel({
   noteConflict = null,
   priority = "",
   workflow = "not_started",
+  nextAction = "",
+  milestoneOverrides = {},
   saveStatus = {},
   configured,
   editable = true,
@@ -40,6 +41,9 @@ export default function TaskPanel({
   onDiscardNoteConflict,
   onUpdatePriority,
   onUpdateWorkflow,
+  onUpdateNextAction,
+  canManualNotify = false,
+  onManualNotify,
   onToggleDone,
   onRefresh,
   onClose,
@@ -48,65 +52,37 @@ export default function TaskPanel({
   const [draftDirty, setDraftDirty] = useState(false)
   const [baseNote, setBaseNote] = useState(note)
   const [baseVersion, setBaseVersion] = useState(noteVersion)
-  const [activity, setActivity] = useState({ loading: configured, error: "", items: [] })
+  const [actionDraft, setActionDraft] = useState(nextAction)
+  const [actionDirty, setActionDirty] = useState(false)
+  const [actionError, setActionError] = useState("")
   const [completion, setCompletion] = useState({ saving: false, error: "" })
-  const closeRef = useRef(null)
-  const panelRef = useRef(null)
-  const previousFocus = useRef(null)
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false)
   const noteStatus = saveStatus[`remarks:${taskKey}`]
   const remoteChanged = draftDirty && noteVersion !== baseVersion
   const conflict = noteConflict || (remoteChanged ? { currentNote: note, noteVersion } : null)
-  const hasUnsavedNote = draftDirty || noteStatus === "saving" || noteStatus === "failed"
+  const hasUnsavedNote = draftDirty || actionDirty || noteStatus === "saving" || noteStatus === "failed"
   const sheetUrl = taskSheetUrl(task, taskKey)
 
-  const loadActivity = useCallback(async () => {
-    if (!configured) return setActivity({ loading: false, error: "", items: [] })
-    setActivity((current) => ({ ...current, loading: true, error: "" }))
-    try { setActivity({ loading: false, error: "", items: await listTaskEvents(taskKey) }) }
-    catch (error) { setActivity((current) => ({ ...current, loading: false, error: error.message })) }
-  }, [configured, taskKey])
+  const loadActivity = useCallback(() => { window.dispatchEvent(new Event('timeline:activity')) }, [])
 
   const requestClose = useCallback(() => {
-    if (hasUnsavedNote && !window.confirm("Note ยังบันทึกไม่สำเร็จ ต้องการปิด panel หรือไม่?")) return
+    if (hasUnsavedNote) { setCloseConfirmOpen(true); return }
     onClose()
   }, [hasUnsavedNote, onClose])
-
-  useEffect(() => {
-    previousFocus.current = document.activeElement
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    closeRef.current?.focus()
-    return () => { document.body.style.overflow = previousOverflow; previousFocus.current?.focus?.() }
-  }, [])
 
   useEffect(() => {
     const timer = setTimeout(loadActivity, 0)
     return () => clearTimeout(timer)
   }, [loadActivity])
 
-  useEffect(() => {
-    if (draftDirty) return
+  // Synchronize remote values during render only while the editor is clean.
+  // Dirty drafts retain their base version so concurrent edits surface a conflict.
+  if (!draftDirty && (baseNote !== note || baseVersion !== noteVersion)) {
     setDraft(note)
     setBaseNote(note)
     setBaseVersion(noteVersion)
-  }, [draftDirty, note, noteVersion])
-
-  useEffect(() => {
-    const keydown = (event) => {
-      if (event.key === "Escape") requestClose()
-      if (event.key !== "Tab" || !panelRef.current) return
-      const focusable = [...panelRef.current.querySelectorAll('button:not([disabled]), a[href], select:not([disabled]), textarea:not([disabled]), input:not([disabled])')]
-      if (!focusable.length) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
-    }
-    document.addEventListener("keydown", keydown)
-    return () => {
-      document.removeEventListener("keydown", keydown)
-    }
-  }, [requestClose])
+  }
+  if (!actionDirty && actionDraft !== nextAction) setActionDraft(nextAction)
 
   const saveNote = async (forceNote = false) => {
     if (!draftDirty && noteStatus !== "failed") return
@@ -127,6 +103,17 @@ export default function TaskPanel({
     onDiscardNoteConflict(taskKey, latest, version)
   }
   const updateAndReload = async (callback) => { if (await callback()) await loadActivity() }
+  const changeWorkflow = async (next) => {
+    setActionError("")
+    if (await onUpdateWorkflow(taskKey, next, actionDirty ? actionDraft.trim() : undefined)) {
+      setActionDirty(false)
+      await loadActivity()
+    }
+  }
+  const saveNextAction = async () => {
+    setActionError("")
+    if (await onUpdateNextAction(taskKey, actionDraft.trim())) { setActionDirty(false); await loadActivity() }
+  }
   const toggleDone = async () => {
     setCompletion({ saving: true, error: "" })
     const saved = await onToggleDone(task, !task.done)
@@ -135,15 +122,18 @@ export default function TaskPanel({
   }
 
   return (
-    <div className="ui-overlay-enter fixed inset-0 z-[11000] flex justify-end bg-black/35" onMouseDown={(event) => { if (event.target === event.currentTarget) requestClose() }}>
-      <section ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="task-panel-title" className="ui-panel-enter h-full w-full max-w-xl overflow-y-auto border-l border-[var(--ui-brand-border)] bg-white p-5 shadow-[var(--ui-shadow-floating)] sm:p-7">
+    <Dialog.Root open onOpenChange={(open) => { if (!open) requestClose() }}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="ui-overlay-enter fixed inset-0 z-[var(--z-overlay)] bg-black/35" />
+          <Dialog.Popup className="ui-panel-enter fixed inset-y-0 right-0 z-[var(--z-modal)] h-[100dvh] w-full max-w-[600px] overflow-y-auto border-l border-[var(--ui-border)] bg-white p-5 shadow-[var(--shadow-overlay)] sm:p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-[var(--ui-brand)]">Task details</p>
-            <h2 id="task-panel-title" className="mt-1 text-xl font-black text-purple-900">{task?.topic || "Task unavailable"}</h2>
-            {task && <p className="mt-1 text-sm text-gray-500">{brandName} · {task.month || "No month"}</p>}
+            <Dialog.Title id="task-panel-title" className="mt-1 text-2xl font-black text-purple-900">{brandName || "Task unavailable"}</Dialog.Title>
+            {task && <p className="mt-1 text-lg font-semibold text-[var(--ui-text)]">{milestoneForTask(task, milestoneOverrides) && <span className={`brand-milestone-badge ${MILESTONE_TYPES[milestoneForTask(task, milestoneOverrides)].className} mr-2 align-middle`}><span aria-hidden="true">{MILESTONE_TYPES[milestoneForTask(task, milestoneOverrides)].icon}</span>{MILESTONE_TYPES[milestoneForTask(task, milestoneOverrides)].label}</span>}{task.topic}</p>}
+            {task && <p className="mt-1 text-xs text-gray-500">{task.month || "No month"}</p>}
           </div>
-          <button ref={closeRef} type="button" onClick={requestClose} aria-label="Close task panel" className="ui-button ui-button-secondary min-h-0 p-2">✕</button>
+          <button type="button" onClick={requestClose} aria-label="Close task panel" className="ui-icon-button"><XIcon aria-hidden="true" size={19} weight="bold" /></button>
         </div>
 
         {!task ? (
@@ -158,18 +148,18 @@ export default function TaskPanel({
           <>
             <div className="mt-6 grid grid-cols-2 gap-3 rounded-xl border border-[var(--ui-brand-border)] bg-[var(--ui-brand-tint)] p-4 text-xs">
               <div><span className="text-gray-400">Responsibility</span><div className="mt-1 font-semibold text-gray-700">{task.responsibility || "—"}</div></div>
-              <div><span className="text-gray-400">Due date</span><div className="mt-1 font-semibold text-gray-700">{task.dueDate || <><Emoji name="unscheduled" /> Unscheduled</>}</div></div>
-              <div><span className="text-gray-400">Actual submit</span><div className="mt-1 font-semibold text-gray-700">{task.actualSubmit || "—"}</div></div>
+              <div><span className="text-gray-400">Due date</span><div className="mt-1 font-semibold text-gray-700">{task.dueDate ? formatThaiDate(task.dueDate) : <><Emoji name="unscheduled" /> Unscheduled</>}{milestoneNeedsDate(task, milestoneOverrides) && <span className="brand-milestone-missing-date ml-1">Missing date</span>}</div></div>
+              <div><span className="text-gray-400">Actual submit</span><div className="mt-1 font-semibold text-gray-700">{formatThaiDate(task.actualSubmit)}</div></div>
+              {Object.entries(task.sourceDates || {}).map(([name, value]) => <div key={name}><span className="text-gray-400">{name}</span><div className="mt-1 font-semibold text-gray-700">{formatThaiDate(value, value || '-')}</div></div>)}
+              {task.actualSubmit && task.dueDate && completedLateDays(task) > 0 && <div><span className="text-gray-400">Late by</span><div className="mt-1 font-semibold text-red-600">{completedLateDays(task)} days</div></div>}
               <div><span className="text-gray-400">Task ID</span><div className="mt-1 truncate font-mono text-[10px] text-gray-500">{task.taskId}</div></div>
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               <label className="text-xs font-semibold text-gray-600">Workflow
-                <select disabled={!editable} value={workflow} onChange={(event) => updateAndReload(() => onUpdateWorkflow(taskKey, event.target.value))} className="ui-field mt-1 block w-full text-sm disabled:bg-gray-100">
-                  {WORKFLOWS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
+                <div className="mt-1"><WorkflowSelect disabled={!editable} value={workflow} onValueChange={changeWorkflow} className="w-full" /></div>
                 {statusLabel(saveStatus[`workflow:${taskKey}`])}
-                {saveStatus[`workflow:${taskKey}`] === "failed" && <button type="button" onClick={() => updateAndReload(() => onUpdateWorkflow(taskKey, workflow))} className="ml-2 text-[10px] font-semibold text-red-500"><Emoji name="retry" /> Retry</button>}
+                {saveStatus[`workflow:${taskKey}`] === "failed" && <button type="button" onClick={() => updateAndReload(() => onUpdateWorkflow(taskKey, workflow, actionDraft.trim()))} className="ml-2 text-[10px] font-semibold text-red-500"><Emoji name="retry" /> Retry</button>}
               </label>
               <label className="text-xs font-semibold text-gray-600">Priority
                 <select disabled={!editable} value={normalizedPriority(priority)} onChange={(event) => updateAndReload(() => onUpdatePriority(taskKey, event.target.value))} className="ui-field mt-1 block w-full text-sm disabled:bg-gray-100">
@@ -179,6 +169,11 @@ export default function TaskPanel({
                 {saveStatus[`priorities:${taskKey}`] === "failed" && <button type="button" onClick={() => updateAndReload(() => onUpdatePriority(taskKey, priority))} className="ml-2 text-[10px] font-semibold text-red-500"><Emoji name="retry" /> Retry</button>}
               </label>
             </div>
+
+            <label className="mt-5 block text-xs font-semibold text-gray-600">Next Action <span className="font-normal text-gray-400">(ไม่บังคับ)</span>
+              <textarea disabled={!editable} value={actionDraft} maxLength={2000} rows={3} onChange={(event) => { setActionDraft(event.target.value); setActionDirty(event.target.value.trim() !== nextAction); setActionError("") }} className={`ui-field mt-1 block w-full resize-y text-sm disabled:bg-gray-100 ${actionError ? "border-red-300" : ""}`} placeholder="ระบุสิ่งที่ต้องทำต่อให้ชัดเจน..." />
+            </label>
+            <div className="mt-2 flex items-center gap-2"><button type="button" disabled={!editable || !actionDirty} onClick={saveNextAction} className="ui-button ui-button-primary text-xs disabled:opacity-40"><Emoji name="save" /> Save Next Action</button>{statusLabel(saveStatus[`nextActions:${taskKey}`])}{actionError && <span className="text-xs text-red-600">{actionError}</span>}</div>
 
             <label className="mt-5 block text-xs font-semibold text-gray-600"><Emoji name="remark" /> Note
               <textarea disabled={!editable} value={draft} maxLength={5000} onChange={(event) => { setDraft(event.target.value); setDraftDirty(event.target.value.trim() !== baseNote) }} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); saveNote() } }} rows={5} className="ui-field mt-1 block w-full resize-y text-sm disabled:bg-gray-100" placeholder="เพิ่มรายละเอียดหรือสิ่งที่ต้องติดตาม..." />
@@ -196,17 +191,26 @@ export default function TaskPanel({
               {!editable && <span className="text-xs text-gray-400">ดูได้อย่างเดียว</span>}
               {completion.error && <><span className="text-xs text-red-500">{completion.error}</span><button type="button" onClick={toggleDone} className="text-xs font-semibold text-red-600"><Emoji name="retry" /> Retry</button></>}
               {sheetUrl && <a href={sheetUrl} target="_blank" rel="noreferrer" className="ml-auto rounded-lg border border-purple-200 px-4 py-2 text-xs font-semibold text-purple-600 hover:bg-purple-50">Open Google Sheet</a>}
+              {canManualNotify && <button type="button" onClick={onManualNotify} className="ui-button ui-button-secondary text-xs">Send Notification</button>}
             </div>
           </>
         )}
 
         <div className="mt-7 border-t border-gray-100 pt-5">
-          <div className="flex items-center justify-between"><h3 className="text-xs font-bold uppercase tracking-widest text-[var(--ui-brand)]"><Emoji name="activity" /> Activity</h3><button type="button" onClick={loadActivity} className="text-[10px] font-semibold text-purple-700"><Emoji name="sync" /> Refresh</button></div>
-          {activity.loading ? <p className="mt-3 text-xs text-gray-400">Loading activity…</p> : activity.error ? <p className="mt-3 text-xs text-red-500">{activity.error} <button type="button" onClick={loadActivity} className="font-semibold underline"><Emoji name="retry" /> Retry</button></p> : activity.items.length ? (
-            <div className="mt-3 divide-y divide-gray-50">{activity.items.map((event) => <div key={event.id} className="py-2 text-xs"><div className="font-medium text-gray-700">{event.event_type} · {event.resource.replaceAll("_", " ")}</div><div className="mt-0.5 text-[10px] text-gray-400">{event.actor_email || "System"} · {new Date(event.created_at).toLocaleString("th-TH")}</div></div>)}</div>
-          ) : <p className="mt-3 text-xs text-gray-400"><Emoji name="inbox" /> ยังไม่มี activity สำหรับงานนี้</p>}
+          {configured && <ActivityHistory key={taskKey} taskKey={taskKey} />}
         </div>
-      </section>
-    </div>
+          </Dialog.Popup>
+      </Dialog.Portal>
+      <AlertDialog.Root open={closeConfirmOpen} onOpenChange={setCloseConfirmOpen}>
+        <AlertDialog.Portal>
+          <AlertDialog.Backdrop className="ui-overlay-enter fixed inset-0 z-[var(--z-alert)] bg-black/45" />
+          <AlertDialog.Popup className="ui-popover ui-modal-enter fixed left-1/2 top-1/2 z-[calc(var(--z-alert)+1)] w-[min(26rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 p-5">
+            <AlertDialog.Title className="text-base font-bold text-[var(--ui-text)]">ปิดโดยยังไม่บันทึกข้อมูล?</AlertDialog.Title>
+            <AlertDialog.Description className="mt-2 text-sm text-[var(--ui-muted)]">Note หรือ Next Action ที่แก้ล่าสุดอาจหายไป คุณต้องการปิดรายละเอียดงานต่อหรือไม่</AlertDialog.Description>
+            <div className="mt-5 flex justify-end gap-2"><AlertDialog.Close className="ui-button ui-button-secondary ui-button-md">กลับไปแก้ไข</AlertDialog.Close><button type="button" className="ui-button ui-button-danger ui-button-md" onClick={onClose}>ปิดโดยไม่บันทึก</button></div>
+          </AlertDialog.Popup>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+    </Dialog.Root>
   )
 }

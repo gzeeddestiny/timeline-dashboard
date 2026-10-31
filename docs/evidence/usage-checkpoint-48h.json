@@ -1,0 +1,109 @@
+{
+  "checkpoint": "48h",
+  "scheduledAt": "2026-09-30T19:08:32.517Z",
+  "status": "performed-with-user-requested-supplement",
+  "doNotAutomaticallyRepeat": true,
+  "newOrganization": {
+    "id": "kkfbtzszacajnhxkbyee",
+    "scope": "all-projects",
+    "egressGB": 0.05,
+    "logIngestionGB": 0.052,
+    "billingPeriod": [
+      "2026-09-29",
+      "2026-10-29"
+    ],
+    "projectFilterVerified": false,
+    "dailyRatesAvailable": false,
+    "blocker": "Session redirected to Sign in after summary was read"
+  },
+  "oldOrganization": {
+    "id": "idlloyglqrwztnnhklcl",
+    "egressGB": 7.156,
+    "logIngestionGB": 1.998,
+    "billingPeriod": [
+      "2026-09-04",
+      "2026-10-04"
+    ],
+    "projects": [
+      {
+        "id": "micjfmxdpxeswcgciyjt",
+        "name": "Timeline Dashboard",
+        "egressGB": 1.627,
+        "logIngestionGB": 0.956,
+        "deltaEgressGB": 0.034,
+        "deltaLogIngestionGB": 0.028
+      },
+      {
+        "id": "rfvcsuwdplvovtljknoi",
+        "name": "ACCOUNTING MAGIC",
+        "egressGB": 5.529,
+        "logIngestionGB": 1.041,
+        "deltaEgressGB": 0.356,
+        "deltaLogIngestionGB": 0.098
+      }
+    ]
+  },
+  "supplement": {
+    "requestedByUser": true,
+    "observedAt": "2026-10-01T19:30:38+07:00",
+    "observationCompletedAt": "2026-10-01T19:37:02+07:00",
+    "source": "Signed-in Chrome gzeed5 Supabase Usage UI and daily chart tooltips",
+    "projectId": "qxlrleabulpqryduntwf",
+    "projectName": "timeline magic",
+    "organizationId": "kkfbtzszacajnhxkbyee",
+    "projectFilterVerified": true,
+    "scope": "project",
+    "egressGB": 0.073,
+    "logIngestionGB": 0.067,
+    "billingPeriod": ["2026-09-29", "2026-10-29"],
+    "usageRefreshLagHours": 1,
+    "dailyChartTimezoneVerified": false,
+    "egressChartIncludesCachedTraffic": true,
+    "daily": [
+      {
+        "chartDate": "2026-09-29",
+        "productionStartDay": true,
+        "egressComponentsAsDisplayed": {
+          "auth": "50.377KB",
+          "postgrest": "12.394MB",
+          "storage": "104.07KB",
+          "realtime": "25.333KB",
+          "sharedPooler": "122.323KB"
+        },
+        "logIngestionMBAsDisplayed": 16.525
+      },
+      {
+        "chartDate": "2026-09-30",
+        "completedChartDate": true,
+        "egressComponentsAsDisplayed": {
+          "auth": "123.718KB",
+          "postgrest": "33.572MB",
+          "storage": "7.778KB",
+          "realtime": "56.205KB"
+        },
+        "postgrestPercentAsDisplayed": 99.5,
+        "egressApproximateMB": 33.76,
+        "logIngestionMBAsDisplayed": 31.071
+      },
+      {
+        "chartDate": "2026-10-01",
+        "partialDay": true,
+        "egressComponentsAsDisplayed": {
+          "auth": "79.323KB",
+          "postgrest": "23.337MB",
+          "realtime": "48.742KB"
+        },
+        "logIngestionMBAsDisplayed": 15.895
+      }
+    ],
+    "sessionBlockerResolved": true,
+    "baselineDailyRateAvailable": false,
+    "migrationAndQATrafficSeparated": false,
+    "rawLogsExported": false,
+    "businessDataOrSettingsChanged": false
+  },
+  "savingsPercent": null,
+  "logQueriesPerformed": false,
+  "sourceResumed": false,
+  "nextCheckpoint": "2026-10-06T01:50:00+07:00"
+}

@@ -8,6 +8,12 @@
       "port": 5173
     },
     {
+      "name": "Activity Preview (fixture)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/preview-activity.mjs"],
+      "port": 4178
+    },
+    {
       "name": "Vite Preview (Production Build)",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "preview"],
