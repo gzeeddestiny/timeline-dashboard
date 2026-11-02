@@ -10,6 +10,22 @@ const STATUS_LABELS = {
   blocked: "Blocked",
 }
 const STATUS_COLORS = { not_started: "#64748b", in_progress: "#2563eb", waiting_client: "#b45309", blocked: "#be123c" }
+const BADGE_STYLE = "display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700"
+
+function activityBadge(task) {
+  if (task.updatedRecently) return { label: "อัพเดทแล้ว", html: `<span style="${BADGE_STYLE};background:#e7f6ec;color:#1e7b3c">อัพเดทแล้ว</span>` }
+  if (task.noActivity) return { label: "No Activity", html: `<span style="${BADGE_STYLE};background:#fdecec;color:#b42318">No Activity</span>` }
+  return null
+}
+
+function lastUpdateText(task, now) {
+  const lastActivity = task.activity?.lastActivityAt
+  if (!lastActivity) return "ยังไม่เคย Update"
+  const since = daysSinceActivity(lastActivity, now)
+  if (task.activity?.lastActivityKind === "task_discovered") return `ยังไม่เคย Update · พบงานครั้งแรก ${formatThaiDateTime(lastActivity)} · ${since} วันที่แล้ว`
+  const fromSync = task.activity?.lastActivityKind === "sheet_sync_detected" ? " (ตรวจพบจาก Sync)" : ""
+  return `${formatThaiDateTime(lastActivity)}${fromSync} · ${since} วันที่แล้ว`
+}
 
 function absoluteUrl(baseUrl, path) {
   try { return new URL(path, baseUrl).toString() }
@@ -41,16 +57,13 @@ export function notificationVariables({ recipientName = "", projectName = "", ta
 function taskCard(task, { baseUrl, now = new Date() }) {
   const due = daysFrom(task.dueDate)
   const overdue = due !== null && due < 0
-  const lastActivity = task.activity?.lastActivityAt
-  const since = lastActivity ? daysSinceActivity(lastActivity, now) : null
   const deadline = task.dueDate
     ? overdue ? `${formatThaiDate(task.dueDate)} · เกิน ${Math.abs(due)} วัน` : `${formatThaiDate(task.dueDate)}${due !== null ? ` · เหลือ ${due} วัน` : ""}`
     : "ยังไม่มี Deadline"
-  const activity = lastActivity
-    ? task.activity?.lastActivityKind === "task_discovered" ? `ยังไม่เคย Update · พบงานครั้งแรก ${formatThaiDateTime(lastActivity)} · ${since} วันที่แล้ว` : `${formatThaiDateTime(lastActivity)} · ${since} วันที่แล้ว`
-    : "ยังไม่เคย Update"
+  const activity = lastUpdateText(task, now)
+  const badge = activityBadge(task)
   return `<article style="border:1px solid #e9e2ff;border-radius:12px;padding:16px;margin:0 0 12px;background:#fff">
-    <div style="font-size:12px;color:#7254c7;font-weight:700">${escapeHtml(task.projectName || task.clientName || "—")}${task.shared ? " · Shared" : ""}${task.noActivity ? " · No Activity" : ""}</div>
+    <div style="font-size:12px;color:#7254c7;font-weight:700">${escapeHtml(task.projectName || task.clientName || "—")}${task.shared ? " · Shared" : ""}${badge ? ` · ${badge.label}` : ""}</div>
     <h3 style="font-size:16px;line-height:1.4;margin:5px 0 12px;color:#241c36">${escapeHtml(task.topic || "—")}</h3>
     <table role="presentation" style="width:100%;border-collapse:collapse;font-size:12px;color:#514961">
       <tr><td style="padding:4px 8px 4px 0;color:#8a8198;width:34%">Status</td><td style="padding:4px 0;font-weight:700;color:${STATUS_COLORS[task.status] || "#64748b"}">${escapeHtml(STATUS_LABELS[task.status] || task.status || "Not Started")}</td></tr>
@@ -63,9 +76,10 @@ function taskCard(task, { baseUrl, now = new Date() }) {
   </article>`
 }
 
-function dailyContent({ tasks, groups, changes, attentionCount, digestDate, baseUrl, now, audience }) {
+function dailyContent({ tasks, groups, changes, attentionCount, resumedCount, digestDate, baseUrl, now, audience }) {
   const e = escapeHtml
-  const text = [`ประจำวันที่ ${formatThaiDate(digestDate || now)}`, `งานต้องติดตาม ${attentionCount} งาน · แก้ไขเมื่อวาน ${changes?.taskCount || 0} งาน`, `เมื่อวานแก้ไขอะไรบ้าง${changes?.date ? ` · ${formatThaiDate(changes.date)}` : ""}`]
+  const resumedText = resumedCount ? ` · กลับมาอัพเดท ${resumedCount} งาน` : ''
+  const text = [`ประจำวันที่ ${formatThaiDate(digestDate || now)}`, `งานต้องติดตาม ${attentionCount} งาน · แก้ไขเมื่อวาน ${changes?.taskCount || 0} งาน${resumedText}`, `เมื่อวานแก้ไขอะไรบ้าง${changes?.date ? ` · ${formatThaiDate(changes.date)}` : ""}`]
   const grouped = new Map()
   for (const event of changes?.events || []) for (const task of event.tasks) {
     if (!grouped.has(task.taskKey)) grouped.set(task.taskKey, { ...task, events: [] })
@@ -77,7 +91,7 @@ function dailyContent({ tasks, groups, changes, attentionCount, digestDate, base
     text.push(`${task.projectName} — ${task.taskName}`)
     changeHtml += `<div style="padding:12px 0;border-bottom:1px solid #eee8f8"><strong>${e(task.projectName)}</strong><br><a href="${e(taskDeepLink(baseUrl, task.taskKey))}">${e(task.taskName)}</a>`
     for (const event of task.events) {
-      const when = event.timePrecision === 'version' ? `${formatThaiDate(event.occurredAt)} (เวลาตามเวอร์ชัน)` : formatThaiDateTime(event.occurredAt)
+      const when = event.timePrecision === 'version' ? `${formatThaiDate(event.occurredAt)} (เวลาตามเวอร์ชัน)` : event.timePrecision === 'sync' ? `${formatThaiDateTime(event.occurredAt)} (≈ เวลาจาก Sync)` : formatThaiDateTime(event.occurredAt)
       const who = `${event.actor} · ${when}`
       text.push(who)
       changeHtml += `<div style="margin-top:8px;color:#62576f;font-size:13px">${e(who)}</div>`
@@ -108,18 +122,32 @@ function dailyContent({ tasks, groups, changes, attentionCount, digestDate, base
       const deadline = task.dueDate ? `${formatThaiDate(task.dueDate)}${due < 0 ? ` · เกินกำหนด ${Math.abs(due)} วัน` : due === 0 ? ' · วันนี้' : ''}` : 'ยังไม่กำหนดวันส่ง'
       const status = value('status', task.status || 'not_started')
       const owners = (task.ownerNames || []).join(', ')
-      taskHtml += `<div style="padding:12px 0;border-bottom:1px solid #eee8f8"><div style="font-size:13px;color:#62576f">${e(task.projectName || task.clientName || '—')}${owners ? ` · ${e(owners)}` : ''}</div><a style="font-weight:bold;color:#5133a1" href="${e(taskDeepLink(baseUrl, task.taskKey))}">${e(task.topic || '—')}</a><div>${e(status)} · <span style="color:${due !== null && due < 0 ? '#b42318' : '#514961'}">${e(deadline)}</span></div><div style="white-space:pre-wrap">ทำต่อ: ${e(task.nextAction || 'ยังไม่ระบุ')}</div></div>`
-      text.push(`${task.projectName || task.clientName} — ${task.topic}`, `ผู้รับผิดชอบ: ${owners || '—'} · ${status}`, `กำหนดส่ง: ${deadline}`, `ทำต่อ: ${task.nextAction || 'ยังไม่ระบุ'}`, taskDeepLink(baseUrl, task.taskKey))
+      const badge = activityBadge(task)
+      const lastUpdate = lastUpdateText(task, now)
+      taskHtml += `<div style="padding:12px 0;border-bottom:1px solid #eee8f8"><div style="font-size:13px;color:#62576f">${e(task.projectName || task.clientName || '—')}${owners ? ` · ${e(owners)}` : ''}</div><a style="font-weight:bold;color:#5133a1" href="${e(taskDeepLink(baseUrl, task.taskKey))}">${e(task.topic || '—')}</a><div>${e(status)} · <span style="color:${due !== null && due < 0 ? '#b42318' : '#514961'}">${e(deadline)}</span></div><div style="font-size:13px;color:#62576f">${badge ? `${badge.html} ` : ''}Last Update: ${e(lastUpdate)}</div><div style="white-space:pre-wrap">ทำต่อ: ${e(task.nextAction || 'ยังไม่ระบุ')}</div></div>`
+      text.push(`${task.projectName || task.clientName} — ${task.topic}`, `ผู้รับผิดชอบ: ${owners || '—'} · ${status}`, `กำหนดส่ง: ${deadline}`, `Last Update: ${lastUpdate}${badge ? ` · ${badge.label}` : ''}`, `ทำต่อ: ${task.nextAction || 'ยังไม่ระบุ'}`, taskDeepLink(baseUrl, task.taskKey))
     }
     if (group.truncated || group.total > group.tasks.length) { taskHtml += '<p>รายละเอียดที่เหลือดูได้ใน Dashboard</p>'; text.push('รายละเอียดที่เหลือดูได้ใน Dashboard') }
   }
   if (!tasks.length) { taskHtml = '<p>ไม่มีงานที่ต้องติดตามวันนี้</p>'; text.push('ไม่มีงานที่ต้องติดตามวันนี้') }
-  const summary = `<div style="font-size:15px;line-height:1.7;overflow-wrap:anywhere"><p style="font-size:18px;font-weight:bold">ประจำวันที่ ${e(formatThaiDate(digestDate || now))}</p><div style="background:#f3effc;padding:14px;border-radius:8px">งานต้องติดตาม <strong>${attentionCount}</strong> งาน · แก้ไขเมื่อวาน <strong>${changes?.taskCount || 0}</strong> งาน</div></div>`
+  const summary = `<div style="font-size:15px;line-height:1.7;overflow-wrap:anywhere"><p style="font-size:18px;font-weight:bold">ประจำวันที่ ${e(formatThaiDate(digestDate || now))}</p><div style="background:#f3effc;padding:14px;border-radius:8px">งานต้องติดตาม <strong>${attentionCount}</strong> งาน · แก้ไขเมื่อวาน <strong>${changes?.taskCount || 0}</strong> งาน${resumedCount ? ` · กลับมาอัพเดท <strong>${resumedCount}</strong> งาน` : ''}</div></div>`
   const html = `<div style="font-size:15px;line-height:1.7;overflow-wrap:anywhere"><h2 style="font-size:18px;margin:24px 0 4px">เมื่อวานแก้ไขอะไรบ้าง${changes?.date ? ` · ${e(formatThaiDate(changes.date))}` : ''}</h2>${changeHtml}<h2 style="font-size:18px;margin:24px 0 4px">งานที่ต้องติดตามวันนี้</h2>${taskHtml}</div>`
   return { html, text, summary }
 }
 
-export function buildNotificationEmail({ template, recipientName, tasks = [], baseUrl, viewAllPath = "/", projectName = "", employeeCount = 0, attentionCount = tasks.length, staleCount = 0, digestDate = "", customMessage = "", groups = null, dataIssues = [], changes = null, now = new Date() }) {
+const RESUMED_LIMIT = 10
+
+function resumedContent(resumedTasks, { baseUrl, now }) {
+  if (!resumedTasks?.length) return { html: "", text: [] }
+  const shown = resumedTasks.slice(0, RESUMED_LIMIT)
+  const title = `อัพเดทแล้วตั้งแต่แจ้งครั้งก่อน · ${resumedTasks.length} งาน`
+  const rows = shown.map((task) => ({ task, line: `${task.projectName || task.clientName || "—"} — ${task.topic || "—"}`, when: lastUpdateText(task, now) }))
+  const more = resumedTasks.length > shown.length ? `ยังมีอีก ${resumedTasks.length - shown.length} งาน · ดูใน Dashboard` : ""
+  const html = `<section style="margin-top:20px;padding:14px;border-radius:10px;background:#e7f6ec"><h2 style="font-size:14px;color:#1e7b3c;margin:0 0 8px">${escapeHtml(title)}</h2>${rows.map(({ task, line, when }) => `<div style="font-size:12px;line-height:1.55;margin-top:6px"><a href="${escapeHtml(taskDeepLink(baseUrl, task.taskKey))}" style="color:#1e5b31;font-weight:700">${escapeHtml(line)}</a><br>Last Update: ${escapeHtml(when)}</div>`).join("")}${more ? `<div style="font-size:12px;margin-top:8px">${escapeHtml(more)}</div>` : ""}</section>`
+  return { html, text: [title, ...rows.map(({ line, when }) => `${line} · ${when}`), more].filter(Boolean) }
+}
+
+export function buildNotificationEmail({ template, recipientName, tasks = [], baseUrl, viewAllPath = "/", projectName = "", employeeCount = 0, attentionCount = tasks.length, staleCount = 0, digestDate = "", customMessage = "", groups = null, dataIssues = [], changes = null, resumedCount = 0, resumedTasks = [], now = new Date() }) {
   const variables = notificationVariables({ recipientName, projectName, tasks, employeeCount, attentionCount, staleCount, digestDate })
   const render = (field) => escapeHtml(renderTemplateText(template?.[field] || "", variables))
   let remainingDetails = 80
@@ -132,7 +160,8 @@ export function buildNotificationEmail({ template, recipientName, tasks = [], ba
   const groupHtml = displayedGroups?.length
     ? displayedGroups.map((group) => `<section style="margin-top:20px"><h2 style="font-size:15px;color:#382866;margin:0 0 10px">${escapeHtml(group.name)} · ${group.total} งาน</h2>${group.tasks.map((task) => taskCard(task, { baseUrl, now })).join("")}${group.truncated ? `<p style="font-size:12px;color:#746b80">รายละเอียดที่เหลือดูได้ใน Dashboard</p>` : ""}</section>`).join("")
     : displayedTasks.map((task) => taskCard(task, { baseUrl, now })).join("")
-  const daily = template?.templateType === "daily_digest" ? dailyContent({ tasks: displayedTasks, groups: displayedGroups, changes, attentionCount, digestDate, baseUrl, now, audience: template.audience }) : null
+  const daily = template?.templateType === "daily_digest" ? dailyContent({ tasks: displayedTasks, groups: displayedGroups, changes, attentionCount, resumedCount, digestDate, baseUrl, now, audience: template.audience }) : null
+  const resumed = resumedContent(resumedTasks, { baseUrl, now })
   const html = `<!doctype html><html lang="th"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;background:#f7f5fb;font-family:Arial,'Noto Sans Thai',sans-serif;color:#241c36">
     <div style="max-width:680px;margin:0 auto;padding:24px 14px">
       <div style="background:#6542c7;color:white;border-radius:14px 14px 0 0;padding:20px"><div style="font-size:12px;opacity:.8">MAGIC Timeline</div><h1 style="font-size:21px;margin:5px 0 0">${render("greeting")}</h1></div>
@@ -143,6 +172,7 @@ export function buildNotificationEmail({ template, recipientName, tasks = [], ba
         ${template?.description ? `<p style="font-size:12px;line-height:1.6;color:#746b80;margin:0 0 18px">${render("description")}</p>` : ""}
         ${customMessage ? `<div style="padding:12px;border-radius:10px;background:#fff8df;font-size:13px;line-height:1.6;margin-bottom:18px"><strong>ข้อความเพิ่มเติม</strong><br>${escapeHtml(customMessage).replaceAll("\n", "<br>")}</div>` : ""}
         ${daily ? daily.html : groupHtml}
+        ${resumed.html}
         ${dataIssues.length ? `<section style="margin-top:20px;padding:14px;border-radius:10px;background:#fff8df"><h2 style="font-size:14px;color:#8a5a00;margin:0 0 8px">Data Issues · ${dataIssues.length}</h2>${dataIssues.slice(0, 20).map((issue) => `<div style="font-size:12px;line-height:1.55;margin-top:6px"><strong>${escapeHtml(issue.projectName)} · ${escapeHtml(issue.taskName)}</strong><br>${escapeHtml(issue.issues.join(" · "))}</div>`).join("")}${dataIssues.length > 20 ? `<div style="font-size:12px;margin-top:8px">ยังมีอีก ${dataIssues.length - 20} รายการใน Follow-up</div>` : ""}</section>` : ""}
         <a href="${escapeHtml(absoluteUrl(baseUrl, viewAllPath))}" style="display:inline-block;margin-top:8px;color:#6542c7;font-size:13px;font-weight:700">ดูทั้งหมดใน Dashboard →</a>
         ${template?.closing ? `<p style="font-size:12px;line-height:1.6;color:#746b80;border-top:1px solid #eee8f8;margin:20px 0 0;padding-top:16px">${render("closing")}</p>` : ""}
@@ -156,6 +186,7 @@ export function buildNotificationEmail({ template, recipientName, tasks = [], ba
     renderTemplateText(template?.description || "", variables),
     customMessage,
     ...(daily ? daily.text.slice(2) : displayedTasks.map((task) => `${task.projectName || task.clientName} — ${task.topic}\nStatus: ${STATUS_LABELS[task.status] || task.status}\nDeadline: ${task.dueDate || "—"}\nNext Action: ${task.nextAction || "—"}\n${taskDeepLink(baseUrl, task.taskKey)}`)),
+    ...resumed.text,
     ...dataIssues.map((issue) => `Data Issue: ${issue.projectName} — ${issue.taskName}: ${issue.issues.join(", ")}`),
     absoluteUrl(baseUrl, viewAllPath),
     renderTemplateText(template?.closing || "", variables),

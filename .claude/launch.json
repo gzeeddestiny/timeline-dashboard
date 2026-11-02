@@ -14,6 +14,12 @@
       "port": 4178
     },
     {
+      "name": "Email Preview (fixture)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/preview-daily-email.mjs"],
+      "port": 4179
+    },
+    {
       "name": "Vite Preview (Production Build)",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "preview"],

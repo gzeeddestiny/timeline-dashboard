@@ -27,6 +27,19 @@ export function actionValue(value) {
   return typeof value === 'object' ? JSON.stringify(value) : String(value)
 }
 
+// Plain-text editor for emails; matches ActivityHistory's attribution rules.
+export function eventActorText(event = {}) {
+  const confirmed = [event.actor_name, event.actor_email].filter(Boolean).join(' · ')
+  if (confirmed) return confirmed
+  if (['revision_single_editor', 'revision_inferred'].includes(event.actor_attribution)) {
+    const inferred = [event.inferred_actor_name, event.inferred_actor_email].filter(Boolean).join(' · ')
+    if (inferred) return `${inferred} (อนุมานจาก Version history)`
+  }
+  const candidates = event.inferred_candidates || []
+  if (event.actor_attribution === 'revision_ambiguous' && candidates.length) return `ไม่ยืนยัน (ช่วงนั้นมี ${candidates.length} คนแก้ไฟล์: ${candidates.join(', ')})`
+  return 'ไม่ทราบผู้แก้ไข'
+}
+
 const HOUR_MS = 60 * 60 * 1000
 
 export function sinceLabel(value, now = Date.now()) {

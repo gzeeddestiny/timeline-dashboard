@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { yesterdayWindow, summarizeDigestChanges } from '../src/lib/digestChanges.js'
-import { generateDailyDigest, loadYesterdayChanges } from '../api/_notifications.js'
+import { generateDailyDigest, generateNoActivity, loadYesterdayChanges } from '../api/_notifications.js'
 import { buildNotificationEmail } from '../src/lib/notificationFormat.js'
 import { DEFAULT_NOTIFICATION_TEMPLATES } from '../src/lib/notifications.js'
 
@@ -106,4 +106,70 @@ test('daily HTML and text include escaped changes, totals, dates, links and trun
   }
   const legacy = buildNotificationEmail({ template: DEFAULT_NOTIFICATION_TEMPLATES[0], baseUrl: 'https://example.com', now })
   assert.match(legacy.html, /ไม่มีการแก้ไขงานที่บันทึกไว้เมื่อวาน/)
+})
+
+const template = (type, audience = 'employee') => DEFAULT_NOTIFICATION_TEMPLATES.find((item) => item.templateType === type && item.audience === audience)
+const hoursAgo = (hours) => new Date(now.getTime() - hours * 3_600_000).toISOString()
+const openTask = (taskKey, topic, activity) => ({ taskKey, projectName: 'Brand', topic, done: false, active: true, status: 'in_progress', nextAction: 'Review', dueDate: '2026-09-20', ownerNames: ['May'], ownerEmails: ['may@test'], activity })
+const resumedTask = openTask('resumed', 'Resumed task', { lastActivityAt: hoursAgo(2), lastActivityKind: 'sheet_sync_detected', resumedAt: hoursAgo(2) })
+const staleTask = openTask('stale', 'Stale task', { lastActivityAt: hoursAgo(200), lastActivityKind: 'sheet_fields_changed' })
+
+test('digest change list names inferred editors and marks sync-time events', () => {
+  const sheet = { ...event, kind: 'sheet_sync_detected', source: 'google_sheet', time_precision: 'sync' }
+  const events = [
+    { ...sheet, id: 'single', actor_attribution: 'revision_single_editor', inferred_actor_name: 'May', inferred_actor_email: 'may@test' },
+    { ...sheet, id: 'many', occurred_at: '2026-09-20T11:00:00+07:00', actor_attribution: 'revision_ambiguous', inferred_candidates: ['May', 'Ton'] },
+    { ...sheet, id: 'confirmed', occurred_at: '2026-09-20T12:00:00+07:00', actor_name: 'Ton', actor_email: 'ton@test', actor_attribution: 'revision_single_editor', inferred_actor_name: 'May' },
+  ]
+  const changes = summarizeDigestChanges(events, tasks, { now })
+  assert.deepEqual(changes.events.map((item) => item.actor), ['May · may@test (อนุมานจาก Version history)', 'ไม่ยืนยัน (ช่วงนั้นมี 2 คนแก้ไฟล์: May, Ton)', 'Ton · ton@test'])
+  const email = buildNotificationEmail({ template: template('daily_digest'), recipientName: 'May', changes, now, digestDate: '2026-09-21', baseUrl: 'https://example.com' })
+  for (const output of [email.html, email.text]) assert.match(output, /≈ เวลาจาก Sync/)
+})
+
+test('digest task rows show updated and No Activity badges and the resumed count', () => {
+  const rows = [{ ...resumedTask, updatedRecently: true }, { ...staleTask, noActivity: true }]
+  const email = buildNotificationEmail({ template: template('daily_digest'), recipientName: 'May', tasks: rows, attentionCount: 2, resumedCount: 1, now, digestDate: '2026-09-21', baseUrl: 'https://example.com' })
+  for (const output of [email.html, email.text]) {
+    assert.match(output, /กลับมาอัพเดท (<strong>)?1(<\/strong>)? งาน/)
+    assert.match(output, /อัพเดทแล้ว/)
+    assert.match(output, /No Activity/)
+    assert.match(output, /ตรวจพบจาก Sync/)
+  }
+  const quiet = buildNotificationEmail({ template: template('daily_digest'), recipientName: 'May', tasks: [], now, baseUrl: 'https://example.com' })
+  assert.doesNotMatch(quiet.text, /กลับมาอัพเดท/)
+})
+
+test('daily digest generator counts the recipient resumed tasks', async () => {
+  const result = await generateDailyDigest(fakeAdmin([]), { ...data, tasks: [resumedTask, staleTask] }, now)
+  const may = result.find((item) => item.batch.recipient_email === 'may@test')
+  assert.match(may.batch.payload.email.text, /กลับมาอัพเดท 1 งาน/)
+  const owner = result.find((item) => item.batch.recipient_email === 'owner@test')
+  assert.match(owner.batch.payload.email.text, /กลับมาอัพเดท 1 งาน/)
+})
+
+function noActivityAdmin() {
+  const batches = []
+  const lookup = { select() { return this }, eq() { return this }, in: async () => ({ data: [], error: null }) }
+  return { batches, from(table) {
+    if (table === 'notification_deliveries' || table === 'notifications') return { upsert: async () => ({ error: null }) }
+    if (table !== 'notification_batches') throw Error(table)
+    return { ...lookup, insert(batch) { return { select: () => ({ single: async () => { batches.push(batch); return { data: { ...batch, id: String(batches.length) } } } }) } } }
+  } }
+}
+
+test('No Activity email lists tasks updated since the last reminder only when there are some', async () => {
+  const withResumed = noActivityAdmin()
+  await generateNoActivity(withResumed, { ...data, tasks: [resumedTask, staleTask] }, now)
+  const email = withResumed.batches[0].payload.email
+  assert.deepEqual(withResumed.batches[0].task_keys, ['stale'])
+  for (const output of [email.html, email.text]) {
+    assert.match(output, /อัพเดทแล้วตั้งแต่แจ้งครั้งก่อน · 1 งาน/)
+    assert.match(output, /Resumed task/)
+  }
+  const staleOnly = noActivityAdmin()
+  await generateNoActivity(staleOnly, { ...data, tasks: [staleTask] }, now)
+  assert.doesNotMatch(staleOnly.batches[0].payload.email.text, /อัพเดทแล้วตั้งแต่แจ้งครั้งก่อน/)
+  const resumedOnly = noActivityAdmin()
+  assert.equal((await generateNoActivity(resumedOnly, { ...data, tasks: [resumedTask] }, now)).length, 0)
 })

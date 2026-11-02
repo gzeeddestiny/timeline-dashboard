@@ -11,6 +11,7 @@ import {
   digestCategory,
   digestRows,
   isNoActivity,
+  isRecentlyResumed,
   manualDuplicateFingerprint,
   notificationDedupeKey,
   templateTokensForField,
@@ -246,6 +247,10 @@ function ownerTasks(data, memberName) {
   return data.tasks.filter((task) => task.ownerNames.some((name) => name.toLocaleLowerCase("th-TH") === normalized))
 }
 
+function withActivityFlags(task, now) {
+  return { ...task, noActivity: isNoActivity(task.activity, task, now), updatedRecently: isRecentlyResumed(task.activity, task, now) }
+}
+
 export async function loadYesterdayChanges(admin, now = new Date()) {
   const { start, end } = yesterdayWindow(now)
   return fetchAllRows((from, to) => admin.from("action_events").select("*")
@@ -264,8 +269,9 @@ export async function generateDailyDigest(admin, data, now = new Date()) {
     const selected = digestRows(ownerTasks(data, recipient.member_name), {}, businessDate, DIGEST_PERSONAL_LIMIT)
     const changes = summarizeDigestChanges(events, ownerTasks(data, recipient.member_name), { now, personal: true, limit: 20 })
     if (!selected.total && !changes.total) continue
-    const tasks = selected.rows.map((task) => ({ ...task, noActivity: isNoActivity(task.activity, task, now) }))
-    const email = buildNotificationEmail({ changes, template: templateEmployee, recipientName: recipient.member_name, tasks, baseUrl: appUrl(), viewAllPath: "/?view=my", attentionCount: selected.total, digestDate: businessDate, now })
+    const tasks = selected.rows.map((task) => withActivityFlags(task, now))
+    const resumedCount = ownerTasks(data, recipient.member_name).filter((task) => isRecentlyResumed(task.activity, task, now)).length
+    const email = buildNotificationEmail({ changes, template: templateEmployee, recipientName: recipient.member_name, tasks, baseUrl: appUrl(), viewAllPath: "/?view=my", attentionCount: selected.total, resumedCount, digestDate: businessDate, now })
     results.push(await insertBatch(admin, {
       type: "daily_digest", audience: "employee", recipient_email: recipient.email, business_date: businessDate,
       task_keys: tasks.map((task) => task.taskKey), task_snapshot: tasks.map(taskSnapshot), payload: { email, changes, total: selected.total, truncated: selected.truncated },
@@ -276,12 +282,13 @@ export async function generateDailyDigest(admin, data, now = new Date()) {
   const issues = notificationDataIssues(data)
   const groups = data.access.filter((entry) => entry.member_name).flatMap((entry) => {
     const selected = digestRows(ownerTasks(data, entry.member_name), {}, businessDate, DIGEST_OWNER_LIMIT)
-    return selected.total ? [{ name: entry.member_name, tasks: selected.rows.map((task) => ({ ...task, noActivity: isNoActivity(task.activity, task, now) })), total: selected.total, truncated: selected.truncated }] : []
+    return selected.total ? [{ name: entry.member_name, tasks: selected.rows.map((task) => withActivityFlags(task, now)), total: selected.total, truncated: selected.truncated }] : []
   })
   const uniqueAttention = uniqueTaskCount(data.tasks.filter((task) => digestCategory(task, task.status, businessDate)))
+  const companyResumed = uniqueTaskCount(data.tasks.filter((task) => isRecentlyResumed(task.activity, task, now)))
   if (groups.length || issues.length || companyChanges.total) for (const owner of data.access.filter((entry) => entry.role === "admin" && data.ownerDigestEmails.has(entry.email.toLowerCase()))) {
     const displayedTasks = groups.flatMap((group) => group.tasks)
-    const email = buildNotificationEmail({ changes: companyChanges, template: templateOwner, recipientName: owner.member_name || owner.email, tasks: displayedTasks, groups, dataIssues: issues, baseUrl: appUrl(), viewAllPath: "/?view=follow_up", employeeCount: groups.length, attentionCount: uniqueAttention, digestDate: businessDate, now })
+    const email = buildNotificationEmail({ changes: companyChanges, template: templateOwner, recipientName: owner.member_name || owner.email, tasks: displayedTasks, groups, dataIssues: issues, baseUrl: appUrl(), viewAllPath: "/?view=follow_up", employeeCount: groups.length, attentionCount: uniqueAttention, resumedCount: companyResumed, digestDate: businessDate, now })
     results.push(await insertBatch(admin, {
       type: "daily_digest", audience: "owner", recipient_email: owner.email, business_date: businessDate,
       task_keys: [...new Set(displayedTasks.map((task) => task.taskKey))], task_snapshot: displayedTasks.map(taskSnapshot), payload: { email, changes: companyChanges, groups, dataIssues: issues, attentionCount: uniqueAttention },
@@ -296,15 +303,17 @@ export async function generateNoActivity(admin, data, now = new Date()) {
   const template = templateFor(data, "no_activity", "employee")
   const results = []
   for (const recipient of data.access.filter((entry) => entry.member_name)) {
-    const stale = ownerTasks(data, recipient.member_name).filter((task) => isNoActivity(task.activity, task, now))
+    const owned = ownerTasks(data, recipient.member_name)
+    const stale = owned.filter((task) => isNoActivity(task.activity, task, now))
     if (!stale.length) continue
+    const resumedTasks = owned.filter((task) => isRecentlyResumed(task.activity, task, now))
     const digest = await admin.from("notification_batches")
       .select("task_keys,notification_deliveries!inner(status)")
       .eq("recipient_email", recipient.email).eq("business_date", businessDate).eq("type", "daily_digest")
       .in("notification_deliveries.status", ["queued", "sending", "sent", "unknown"])
     if (digest.error) throw digest.error
     const emailTasks = tasksNotCoveredByDigest(stale, digest.data, DIGEST_PERSONAL_LIMIT).map((task) => ({ ...task, noActivity: true }))
-    const email = emailTasks.length ? buildNotificationEmail({ template, recipientName: recipient.member_name, tasks: emailTasks, baseUrl: appUrl(), viewAllPath: "/?view=my&attention=no_activity", staleCount: stale.length, now }) : null
+    const email = emailTasks.length ? buildNotificationEmail({ template, recipientName: recipient.member_name, tasks: emailTasks, baseUrl: appUrl(), viewAllPath: "/?view=my&attention=no_activity", staleCount: stale.length, resumedTasks, now }) : null
     results.push(await insertBatch(admin, {
       type: "no_activity", audience: "employee", recipient_email: recipient.email, business_date: businessDate,
       task_keys: stale.map((task) => task.taskKey), task_snapshot: stale.map(taskSnapshot), payload: { email, total: stale.length, emailTaskKeys: emailTasks.map((task) => task.taskKey) },

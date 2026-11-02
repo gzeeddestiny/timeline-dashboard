@@ -1,4 +1,5 @@
 import { bangkokDate } from './dates.js'
+import { eventActorText } from './activity.js'
 
 export function yesterdayWindow(now = new Date()) {
   const end = `${bangkokDate(now)}T00:00:00+07:00`
@@ -19,7 +20,7 @@ export function summarizeDigestChanges(events, tasks, { now = new Date(), person
     const keys = [...new Set(event.task_keys || [])].filter((key) => !personal || byKey.has(key))
     if (!keys.length || !Object.keys(changes).length) return []
     seen.add(event.id)
-    return [{ id: event.id, occurredAt: event.occurred_at, actor: event.actor_name || event.actor_email || 'ไม่ทราบผู้แก้ไข', source: event.source,
+    return [{ id: event.id, occurredAt: event.occurred_at, actor: eventActorText(event), source: event.source,
       timePrecision: event.time_precision, changes,
       tasks: keys.map((key) => ({ taskKey: key, projectName: byKey.get(key)?.projectName || event.project_name || event.brand_name || 'ไม่ระบุโปรเจกต์', taskName: byKey.get(key)?.topic || event.task_name || 'ไม่ระบุชื่องาน' })) }]
   }).sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt) || String(a.id).localeCompare(String(b.id)))
